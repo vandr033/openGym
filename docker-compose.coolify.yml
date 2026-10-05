@@ -2,27 +2,42 @@ name: opengym
 
 services:
   media:
-    image: alpine/git
+    image: alpine/git:latest
+
+    restart: "no"
 
     volumes:
       - opengym_media_img:/out/img
       - opengym_media_gif:/out/gif
 
-    entrypoint: ["/bin/sh", "-c"]
+    entrypoint:
+      - /bin/sh
+      - -c
 
     command:
       - |
-        if [ -z "$$(ls -A /out/img 2>/dev/null)" ]; then
+        set -e
+
+        mkdir -p /out/img /out/gif
+
+        if [ -z "$$(ls -A /out/img 2>/dev/null)" ] || [ -z "$$(ls -A /out/gif 2>/dev/null)" ]; then
           echo "Downloading exercise media..."
-          git clone --depth 1 https://github.com/hasaneyldrm/exercises-dataset /tmp/ds
-          cp /tmp/ds/images/*.jpg /out/img/
-          cp /tmp/ds/videos/*.gif /out/gif/
+
+          rm -rf /tmp/exercises-dataset
+
+          git clone \
+            --depth 1 \
+            https://github.com/hasaneyldrm/exercises-dataset \
+            /tmp/exercises-dataset
+
+          cp /tmp/exercises-dataset/images/*.jpg /out/img/
+          cp /tmp/exercises-dataset/videos/*.gif /out/gif/
+
           echo "Exercise media ready."
         else
-          echo "Exercise media already present."
+          echo "Exercise media already present. Skipping download."
         fi
 
-    restart: "no"
 
   api:
     build:
@@ -44,6 +59,7 @@ services:
       SESSION_DAYS: ${SESSION_DAYS:-90}
 
       ADMIN_UIDS: ${ADMIN_UIDS:-}
+
       INVITE_ONLY: ${INVITE_ONLY:-0}
       ALLOW_GUEST: ${ALLOW_GUEST:-1}
       PASSWORD_LOGIN: ${PASSWORD_LOGIN:-0}
@@ -55,11 +71,30 @@ services:
       AUDIT_DAYS: ${AUDIT_DAYS:-90}
       AUDIT_IP: ${AUDIT_IP:-off}
 
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
+
       COACH_DISABLED: ${COACH_DISABLED:-}
+
+      COACH_CODEX_HOME: /codex
 
     volumes:
       - opengym_data:/data
-      - opengym_coach_auth:/coach-auth
+      - opengym_codex:/codex
+
+    expose:
+      - "3000"
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget --spider -q \"http://127.0.0.1:$${PORT:-3000}/api/health\" || exit 1"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
 
   web:
     build:
@@ -77,19 +112,39 @@ services:
 
     environment:
       NGINX_PORT: ${NGINX_PORT:-80}
-      BACKEND: api
+
+      BACKEND: ${BACKEND:-api}
       PORT: ${PORT:-3000}
+
       RESOLVER: 127.0.0.11
+
       CF_CONNECTING_IP: ${CF_CONNECTING_IP:-}
+
       BASE_PATH: ${BASE_PATH:-}
+
       MEDIA_UPLOAD_MAX: ${MEDIA_UPLOAD_MAX:-48m}
+
+    expose:
+      - "80"
 
     volumes:
       - opengym_media_img:/usr/share/nginx/html/img:ro
       - opengym_media_gif:/usr/share/nginx/html/gif:ro
 
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget --spider -q \"http://127.0.0.1:$${NGINX_PORT:-80}/\" || exit 1"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+
 volumes:
   opengym_data:
-  opengym_coach_auth:
+  opengym_codex:
   opengym_media_img:
   opengym_media_gif:
