@@ -38,6 +38,24 @@ describe('saved workout editing', () => {
     expect(saved.entries[1]).not.toHaveProperty('plan')
   })
 
+  it('keeps set notes when editing a finished workout', () => {
+    const state = fixture()
+    state.workouts[0].entries[0].sets[0].note = 'grip felt unstable'
+    editCompletedSession(state, 'workout')
+    state.active.entries[0].sets[0].note = 'wrist felt awkward'
+    const saved = saveWorkoutEdit(state)
+    expect(saved.entries[0].sets[0].note).toBe('wrist felt awkward')
+  })
+
+  it('keeps discomfort entries when editing a finished workout', () => {
+    const state = fixture()
+    state.workouts[0].entries[0].sets[0].discomfort = { severity: 'mild', note: 'wrist' }
+    editCompletedSession(state, 'workout')
+    state.active.entries[0].sets[0].discomfort = { severity: 'moderate', note: 'still felt it' }
+    const saved = saveWorkoutEdit(state)
+    expect(saved.entries[0].sets[0].discomfort).toEqual({ severity: 'moderate', note: 'still felt it' })
+  })
+
   it('rebuilds best weights and PR flags after lowering record work', () => {
     const state = fixture()
     state.workouts.push({ id: 'later', d: '2026-09-02', start: 3000, end: 4000, entries: [entry(30)], prs: [] })

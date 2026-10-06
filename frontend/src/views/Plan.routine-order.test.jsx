@@ -11,6 +11,7 @@ import Plan from './Plan.jsx'
 vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn() }))
 vi.mock('../sheets.jsx', () => ({
   dayAssignSheet: vi.fn(), dayAddRoutineSheet: vi.fn(), starterPlanSheet: vi.fn(), planToolsSheet: vi.fn(),
+  programsSheet: vi.fn(), routineImportSheet: vi.fn(), startFlow: vi.fn(),
 }))
 
 const routine = (id, name) => ({ id, name, emoji: null, ex: [{ id: '0025' }] })

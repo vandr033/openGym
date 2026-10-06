@@ -893,6 +893,56 @@ body.chips-dragging *{cursor:inherit}
   position:relative;padding:0;border:0;font-family:inherit;cursor:pointer;
   transition:background var(--fast),color var(--fast);
 }
+.setrow .n.has-note,.setrow-side>.n.has-note{color:var(--acc)}
+.set-note-mark{position:absolute;inset-inline-end:-4px;inset-block-end:-3px;font-size:9px;background:var(--surface-1);border-radius:50%;padding:1px}
+.workout-set-note{display:flex;align-items:center;gap:5px;max-width:100%;margin-top:3px;padding:0;border:0;background:none;text-align:start;font:inherit;line-height:1.35;cursor:pointer}
+.workout-set-note .icn{flex:none;color:var(--acc)}
+.workout-set-details{display:inline-flex;align-items:center;gap:5px;margin-top:5px;padding:3px 0;border:0;background:none;color:var(--acc);font:inherit;cursor:pointer}
+.workout-set-details-list{display:grid;gap:2px;max-height:min(55vh,440px);overflow:auto}
+.workout-set-detail-row{display:flex;align-items:center;gap:10px;padding:9px 2px;border-bottom:1px solid var(--sep)}
+.workout-set-detail-row .iconbtn.on{color:var(--acc)}
+.workout-set-detail-row .discomfort-line{display:flex;align-items:center;gap:4px;color:var(--orange);margin-top:3px}
+.readiness-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 2px;border-bottom:1px solid var(--sep)}
+.readiness-scores{display:grid;grid-template-columns:repeat(5,minmax(34px,1fr));gap:5px}
+.readiness-scores .chip{min-width:34px;min-height:36px}
+.discomfort-options{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-bottom:12px}
+.discomfort-options .chip{min-height:38px;padding-inline:5px}
+.training-export-range{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:10px}
+.training-export-range label{display:grid;gap:4px;min-width:0}
+.training-export-range input{min-width:0}
+@media(max-width:360px){.training-export-range{grid-template-columns:1fr}}
+
+.program-panel{margin:12px 0 18px;padding:14px 16px;border:1px solid var(--line);border-radius:12px;background:var(--surface-1)}
+.program-home-current,.program-home-next{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-top:10px;padding-top:9px;border-top:1px solid var(--sep)}
+.program-home-current b,.program-home-next>span:last-child{min-width:0;text-align:end;overflow-wrap:anywhere}
+.program-home-next{flex-wrap:wrap}
+.program-panel-phase{display:flex;align-items:center;gap:10px;margin:10px 0 5px;flex-wrap:wrap}
+.program-panel-phase span:not(.tag){color:var(--muted);font-size:13px}
+.program-panel-actions{flex-wrap:wrap;gap:6px;margin-top:10px}
+.program-saved,.program-phase-edit{padding:12px;border:1px solid var(--line);border-radius:10px;margin:10px 0}
+.program-saved.is-active{border-color:color-mix(in srgb,var(--acc) 60%,var(--line))}
+.program-current{display:grid;gap:6px;margin-top:10px}
+.program-actions{flex-wrap:wrap;gap:6px}
+.program-phase-list{display:grid;gap:6px;margin-top:12px}
+.program-phase-list>.row{gap:8px}
+.program-form-scroll{max-height:calc(100dvh - 170px);overflow:auto;padding:0 2px 12px}
+.program-form-scroll>.input{margin:5px 0 12px}
+.program-phase-edit{margin:14px 0}
+.program-duration{justify-content:flex-start;gap:10px;margin:10px 0}
+.program-duration .input{width:90px;margin:0}
+.program-deload{gap:8px;margin:10px 0;font-size:13px}
+.program-days{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:0 10px}
+@media (max-width:520px){.program-panel{padding:12px}.program-panel-actions>button{flex:1 1 auto}.program-days{grid-template-columns:1fr}}
+.routine-header-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.routine-import-scroll{max-height:calc(100dvh - 220px);overflow:auto;padding:0 2px 8px}
+.routine-import-summary,.routine-import-routine,.routine-import-schedule,.routine-import-collision{display:grid;gap:7px;margin:10px 0;padding:11px;border:1px solid var(--line);border-radius:10px}
+.routine-import-summary{grid-template-columns:repeat(auto-fit,minmax(95px,1fr));font-size:12px;color:var(--muted)}
+.routine-import-summary b{grid-column:1/-1;color:var(--label)}
+.routine-import-exercise{padding:9px 0;border-top:1px solid var(--line)}
+.routine-import-select{margin-top:6px}
+.routine-import-schedule .row{gap:8px;font-size:13px}
+.routine-import-input{width:100%;resize:vertical;font-family:var(--font-mono,monospace);font-size:12px;line-height:1.45;margin-bottom:10px}
+@media (max-width:480px){.routine-header-actions{width:100%;justify-content:stretch}.routine-header-actions>button{flex:1}.routine-import-scroll{max-height:calc(100dvh - 250px)}}
 .setrow .stp.w{flex:1.4;min-width:0}
 .setrow .stp.r{flex:1;min-width:0}
 /* The number outranks the buttons in every set row, not only the ones with an effort column
@@ -1151,12 +1201,15 @@ body.chips-dragging *{cursor:inherit}
 .setextra .chip.add svg{width:13px;height:13px}
 .setextra .chip.add:disabled{opacity:.35}
 /* why the next target is what it is (issue #17) */
+.progline-wrap{display:flex;align-items:center;gap:7px;margin:6px 0 2px}
 .progline{
-  width:100%;display:flex;align-items:flex-start;gap:7px;margin:6px 0 2px;padding:0;
+  flex:1;min-width:0;width:100%;display:flex;align-items:flex-start;gap:7px;margin:0;padding:0;
   text-align: start;font-size:13px;line-height:1.38;color:var(--acc);
 }
 .progline.warn{color:var(--yellow)}
 .progline svg{flex:none;margin-top:2px}
+.progwhy{width:44px;height:44px;display:grid;place-items:center;flex:none;border:1px solid var(--line);border-radius:50%;background:var(--surface-1);color:var(--muted);cursor:pointer}
+.progwhy svg{font-size:13px}
 /* "Last time" / "Best set" under the plan line (#173): a button that switches between the two,
    looking like the plain line it replaced, with a small icon to say it can be tapped. */
 .refline{width:100%;display:flex;align-items:flex-start;gap:6px;margin-bottom:4px;padding:0;text-align:start}

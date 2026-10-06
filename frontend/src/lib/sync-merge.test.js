@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { keepReset, localExtras, mergeBodyweight, mergeResetIds, mergeStampedMap, mergeStates, newerOf, resetIdsOf, RESET_ID_MAX, sinceReset, stampCustomEx, stampRoutines, stampWorkout, unionById } from './sync-merge.js'
+import { keepReset, localExtras, mergeBodyweight, mergeResetIds, mergeStampedMap, mergeStates, newerOf, resetIdsOf, RESET_ID_MAX, sinceReset, stampCustomEx, stampPrograms, stampRoutines, stampWorkout, unionById } from './sync-merge.js'
 import { mergeImport } from './import-csv.js'
 import { convertBodyWeight, convertStateUnit, convertWeight } from './units.js'
 import { retimeWorkout } from './workout-date.js'
@@ -157,6 +157,19 @@ describe('mergeStates', () => {
       const other = base({ _ts: 200, workouts: [logged([set(80)])], exWeights: { sq: { w: 120, d: '2026-08-01' } } })
       expect(mergeStates(other, base({ _ts: 100, workouts: [moved], exWeights: {} })).exWeights.sq).toEqual({ w: 120, d: '2026-08-01' })
     })
+
+    it('keeps per-set notes when an edited workout syncs over an older copy', () => {
+      const editedWorkout = stampWorkout(logged([{
+        id: 'sq', target: { mode: 'reps' },
+        sets: [{ w: 80, r: 5, done: true, note: 'grip felt unstable', discomfort: { severity: 'mild', note: 'wrist' } }],
+      }]), 100)
+      const edited = base({ _ts: 100, workouts: [editedWorkout] })
+      const stale = base({ _ts: 50, workouts: [logged([set(75)])] })
+      for (const merged of [mergeStates(edited, stale), mergeStates(stale, edited)]) {
+        expect(merged.workouts[0].entries[0].sets[0].note).toBe('grip felt unstable')
+        expect(merged.workouts[0].entries[0].sets[0].discomfort).toEqual({ severity: 'mild', note: 'wrist' })
+      }
+    })
   })
 
   it('is commutative on the union fields and idempotent', () => {
@@ -299,6 +312,28 @@ describe('routines keep the version edited last', () => {
     again[1]._ts = 99
     stampRoutines(next, again, 2000)
     expect(again.map(x => x._ts)).toEqual([1000, 99, 1000])
+  })
+})
+
+describe('program blocks sync by id and edit stamp', () => {
+  const program = (id, name, ts) => ({ id, name, phases: [], ...(ts != null ? { _ts: ts } : {}) })
+
+  it('unions distinct programs and keeps the later edit of a shared program', () => {
+    const a = base({ _ts: 100, programs: [program('block', 'Phone edit', 90), program('other', 'Other', 5)], activeProgramId: 'block' })
+    const b = base({ _ts: 200, programs: [program('block', 'Old edit', 20), program('remote', 'Remote', 8)], activeProgramId: 'remote' })
+    for (const merged of [mergeStates(a, b), mergeStates(b, a)]) {
+      expect(ids(merged.programs).sort()).toEqual(['block', 'other', 'remote'])
+      expect(merged.programs.find(item => item.id === 'block').name).toBe('Phone edit')
+    }
+    expect(mergeStates(a, b).activeProgramId).toBe('remote')
+  })
+
+  it('stamps added or edited programs only', () => {
+    const prev = [program('a', 'A', 5)]
+    const next = JSON.parse(JSON.stringify([...prev, program('b', 'B')]))
+    next[0].name = 'A2'
+    stampPrograms(prev, next, 100)
+    expect(next.map(item => item._ts)).toEqual([100, 100])
   })
 })
 

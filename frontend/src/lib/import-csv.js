@@ -80,11 +80,11 @@ const COLUMNS = [
   ['setType', ['set type']],
   // Hevy numbers the supersets of a workout; rows sharing a number were done as one.
   ['superset', ['superset id']],
-  // The session's note, before the per-set one: Strong writes both, "Notes" first, and a
-  // shared alias list handed the session note's column to nobody. Hevy calls it the workout's
-  // description.
+  // Keep the three note scopes apart: the workout description belongs to the session, Hevy's
+  // exercise_notes column belongs to the exercise, and comments/notes belong to the set (Strong).
   ['workoutNote', ['workout notes', 'workout note', 'description']],
-  ['note', ['comment', 'comments', 'notes', 'note', 'exercise notes']],
+  ['exerciseNote', ['exercise notes', 'exercise note']],
+  ['setNote', ['set notes', 'set note', 'comment', 'comments', 'notes', 'note']],
 ]
 
 function mapHeader(header) {
@@ -444,7 +444,8 @@ export function parseWorkoutCSV(text, { unit = 'kg' } = {}) {
 
     const reps = Math.round(num(cell(r, 'reps')))
     const secs = num(cell(r, 'seconds'))
-    const setNote = cell(r, 'note')
+    const setNote = cell(r, 'setNote')
+    const exerciseNote = cell(r, 'exerciseNote')
     const mins = secs > 0 ? Math.round(secs / 60 * 10) / 10 : toMinutes(cell(r, 'time'))
     const km = map.distanceKm !== undefined && cell(r, 'distanceKm')
       ? num(cell(r, 'distanceKm'))
@@ -491,10 +492,10 @@ export function parseWorkoutCSV(text, { unit = 'kg' } = {}) {
     // `u` carries the row's own unit into the conversion pass below and is dropped there —
     // it never reaches the stored set.
     const set = timed
-      ? { sec: Math.round(secs), w, done: true, u: rowUnit, ...(warmup ? { phase: 'warmup' } : {}) }
+      ? { sec: Math.round(secs), w, done: true, u: rowUnit, ...(warmup ? { phase: 'warmup' } : {}), ...(setNote ? { note: setNote } : {}) }
       : isCardio
-        ? { min: mins || 0, speed: mins > 0 ? Math.round(km / (mins / 60) * 10) / 10 : 0, done: true, ...(warmup ? { phase: 'warmup' } : {}) }
-        : { w, r: reps || 0, done: true, u: rowUnit, ...(warmup ? { phase: 'warmup' } : {}) }
+        ? { min: mins || 0, speed: mins > 0 ? Math.round(km / (mins / 60) * 10) / 10 : 0, done: true, ...(warmup ? { phase: 'warmup' } : {}), ...(setNote ? { note: setNote } : {}) }
+        : { w, r: reps || 0, done: true, u: rowUnit, ...(warmup ? { phase: 'warmup' } : {}), ...(setNote ? { note: setNote } : {}) }
     // Effort rides along only where the app can show it again: a weighted rep set. A treadmill
     // row with an RPE would have nowhere to put it. A set is kept on one scale, so a file
     // carrying both columns is read as RIR — the same precedence setLabel reads them back with.
@@ -507,7 +508,7 @@ export function parseWorkoutCSV(text, { unit = 'kg' } = {}) {
 
     let day = byDate.get(when.d)
     if (!day) {
-      day = { ex: new Map(), name: cell(r, 'workoutName') || '', start: when.t, end: null, note: '', notes: new Map(), sg: new Map(), groups: new Map() }
+      day = { ex: new Map(), name: cell(r, 'workoutName') || '', start: when.t, end: null, note: '', exerciseNotes: new Map(), sg: new Map(), groups: new Map() }
       byDate.set(when.d, day)
     }
     if (!day.name) day.name = cell(r, 'workoutName') || ''
@@ -519,11 +520,10 @@ export function parseWorkoutCSV(text, { unit = 'kg' } = {}) {
     }
     if (!day.ex.has(id)) day.ex.set(id, [])
     day.ex.get(id).push(set)
-    // A note written against a set belongs to the exercise that day; the app keeps one per entry.
-    if (setNote) {
-      const list = day.notes.get(id) || []
-      if (!list.includes(setNote)) list.push(setNote)
-      day.notes.set(id, list)
+    if (exerciseNote) {
+      const list = day.exerciseNotes.get(id) || []
+      if (!list.includes(exerciseNote)) list.push(exerciseNote)
+      day.exerciseNotes.set(id, list)
     }
     const ss = cell(r, 'superset')
     if (ss && !day.sg.has(id)) {
@@ -557,7 +557,7 @@ export function parseWorkoutCSV(text, { unit = 'kg' } = {}) {
     const entries = [...day.ex.entries()].map(([id, ss]) => {
       const conv2 = ss.map(({ u, ...s }) => (s.w !== undefined ? { ...s, w: convRow({ ...s, u }) } : s))
       const mx = Math.max(0, ...conv2.filter(s => !isWarmupRow(s)).map(s => s.w || 0))
-      const note = (day.notes.get(id) || []).join(' · ').slice(0, 280)
+      const note = (day.exerciseNotes.get(id) || []).join(' · ').slice(0, 280)
       return { id, sets: conv2, topW: mx || null, ...(day.sg.has(id) ? { sg: day.sg.get(id) } : {}), ...(note ? { note } : {}) }
     })
     // A superset is exercises next to each other; one left without a neighbour sharing its

@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased — structured training and AI data tools
+
+- Double progression advances only when all normal working sets reach the rep-range ceiling;
+  warm-ups, drop sets, rest-pause sets and incomplete work do not count. The active target explains
+  how it was chosen.
+- **Import Routine** accepts `opengym-routine-v1` JSON, previews exercise matches and schedule
+  changes, and defaults name collisions to creating a new version.
+- Date-based program blocks schedule a weekly routine split per phase, show the active/upcoming
+  phase on Home, and support phase switches, extensions, pause/resume and deload phases.
+- Generate a deload copy with load and set multipliers, or start a scheduled routine manually as a
+  deload. Planned deload work stays out of progression.
+- **Export Training Data for AI** creates a purpose-built JSON or CSV for a selected date range;
+  exercise history has its own copy action.
+- Optional set notes, readiness check-ins and set-level discomfort logging are preserved in workout
+  history and sync. Readiness does not change the plan and discomfort logging offers no medical
+  advice.
+- See [AI routines and training data](docs/AI_TRAINING.md) for the JSON formats, preview behavior,
+  ChatGPT prompt helper and export fields.
+
 ## v1.3.9 — 2026-09-28
 
 The milestone was "edit your history", and it is in: fix a saved workout after the fact, move it to

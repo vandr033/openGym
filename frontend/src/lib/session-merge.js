@@ -19,14 +19,14 @@ import { buildSessionEntries } from './session-start.js'
  * Returns `{ entries, routineIds, routines }` — `routineIds` / `routines` are the resolved,
  * de-duplicated list, so a caller stores exactly what was built.
  */
-export function buildCombinedEntries(st, routineIds) {
+export function buildCombinedEntries(st, routineIds, { deload = false } = {}) {
   const seen = new Set()
   const routines = [].concat(routineIds ?? [])
     .filter(id => id && !seen.has(id) && seen.add(id))
     .map(id => (st.routines || []).find(r => r.id === id))
     .filter(Boolean)
   const entries = routines.flatMap(r =>
-    buildSessionEntries(st, r).map(e => ({ ...e, rid: r.id }))
+    buildSessionEntries(st, r, { forceNoProg: deload }).map(e => ({ ...e, rid: r.id }))
   )
   return { entries, routineIds: routines.map(r => r.id), routines }
 }

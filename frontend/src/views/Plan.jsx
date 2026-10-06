@@ -1,8 +1,8 @@
 import { useNavigate } from 'react-router-dom'
 import { useStore } from '../store/useStore.js'
-import { DAYN, weekOrder, weekStartOf, uid, exCount, routineCount } from '../lib/format.js'
+import { DAYN, weekOrder, weekStartOf, uid, exCount, routineCount, todayISO } from '../lib/format.js'
 import { t } from '../lib/i18n.js'
-import { dayAssignSheet, dayAddRoutineSheet, starterPlanSheet, planToolsSheet, confirmSheet } from '../sheets.jsx'
+import { dayAssignSheet, dayAddRoutineSheet, starterPlanSheet, planToolsSheet, programsSheet, routineImportSheet, startFlow, confirmSheet } from '../sheets.jsx'
 import Icon from '../components/Icon.jsx'
 import { Button } from '../components/ui.jsx'
 import SwipeToDelete from '../components/SwipeToDelete.jsx'
@@ -12,6 +12,7 @@ import { glyphOf, DEFAULT_GLYPH } from '../lib/glyphs.js'
 import { DEMO } from '../lib/demo.js'
 import { MOBILE } from '../lib/mobile.js'
 import { coachAvailable } from '../lib/coach.js'
+import { activeProgramContext, daysBetween, extendPhase, pauseProgram, resumeProgram } from '../lib/programs.js'
 
 export default function Plan() {
   const nav = useNavigate()
@@ -26,6 +27,13 @@ export default function Plan() {
      configured, and invisible. The same predicate every other Coach surface uses gates it, so
      an instance without the feature sees exactly the Plan screen it saw before. */
   const showCoach = coachAvailable(config, user, { demo: DEMO, mobile: MOBILE, coachMode })
+  const today = todayISO()
+  const activeProgram = (S.programs || []).find(program => program.id === S.activeProgramId)
+  const programContext = activeProgramContext(S, today)
+  const nextPhase = programContext && activeProgram?.phases?.[programContext.index + 1]
+  const upcomingPhase = activeProgram && !programContext
+    ? activeProgram.phases.find(phase => phase.startsOn > today)
+    : null
 
   // Swap with the neighbour, the way the routine editor moves an exercise. `S.routines` is the
   // one order the whole app reads, so this is all there is to it (#142).
@@ -69,6 +77,42 @@ export default function Plan() {
       <Icon name="chevronRight" className="coach-cta-chev" />
     </button>}
 
+    <section className="program-panel">
+      <div className="row between">
+        <div><div className="lbl2">{t('Program')}</div>
+          <div className="ttl">{activeProgram?.name || t('No active program')}</div></div>
+        <Button size="sm" variant="ghost" onClick={programsSheet}>{t(activeProgram ? 'Manage' : 'Set up')}</Button>
+      </div>
+      {programContext ? <>
+        <div className="program-panel-phase">
+          <b>{programContext.phase.name}</b>
+          <span>{t('Week {0} of {1}', Math.min(programContext.phase.weeks,
+            Math.floor(Math.max(0, daysBetween(programContext.start, today) || 0) / 7) + 1),
+            programContext.phase.weeks)}</span>
+          {programContext.deload && <span className="tag">{t('Deload')}</span>}
+        </div>
+        {nextPhase && <div className="small dim">{t('Next')}: {nextPhase.name} · {t('starts')} {nextPhase.startsOn}</div>}
+        <div className="row program-panel-actions">
+          <Button size="sm" variant="ghost" onClick={() => useStore.getState().update(s => {
+            const index = s.programs.findIndex(program => program.id === activeProgram.id)
+            if (index >= 0) s.programs[index] = extendPhase(s.programs[index], programContext.index)
+          })}>{t('Extend one week')}</Button>
+          <Button size="sm" variant="ghost" onClick={() => useStore.getState().update(s => {
+            const index = s.programs.findIndex(program => program.id === activeProgram.id)
+            if (index >= 0) s.programs[index] = pauseProgram(s.programs[index], today)
+          })}>{t('Pause')}</Button>
+          {!programContext.deload && !S.active && effectiveRoutineIds(S, today).length > 0 &&
+            <Button size="sm" variant="tinted" onClick={() => startFlow(effectiveRoutineIds(S, today), { deload: true })}>{t('Start deload')}</Button>}
+        </div>
+      </> : activeProgram?.pausedAt ? <div className="small dim">{t('Program paused')}
+        <button className="textbtn" onClick={() => useStore.getState().update(s => {
+          const index = s.programs.findIndex(program => program.id === activeProgram.id)
+          if (index >= 0) s.programs[index] = resumeProgram(s.programs[index], today)
+        })}>{t('Resume')}</button></div>
+        : upcomingPhase ? <div className="small dim">{t('Upcoming')}: {upcomingPhase.name} · {upcomingPhase.startsOn}</div>
+          : activeProgram && <div className="small dim">{t('Program complete')}</div>}
+    </section>
+
     <div className="cols"><div>
       <h4 className="sec">{t('Week schedule')}</h4>
       <div className="list" style={{ display: 'flex', flexDirection: 'column' }}>
@@ -104,7 +148,10 @@ export default function Plan() {
     </div><div>
       <div className="row between" style={{ marginTop: 22, marginBottom: 10 }}>
         <h4 className="sec" style={{ margin: 0 }}>{t('Routines')}</h4>
-        <Button size="sm" variant="tinted" icon="plus" onClick={addRoutine}>{t('New')}</Button>
+        <div className="routine-header-actions">
+          <Button size="sm" variant="ghost" icon="upload" onClick={routineImportSheet}>{t('Import Routine')}</Button>
+          <Button size="sm" variant="tinted" icon="plus" onClick={addRoutine}>{t('New')}</Button>
+        </div>
       </div>
       {S.routines.length ? <div className="list">{S.routines.map((r, i) => <SwipeToDelete key={r.id} className="item"
         deleteLabel={t('Delete routine')} onDelete={() => confirmDelete(r)} {...tappable(() => nav('/plan/r/' + r.id))}>

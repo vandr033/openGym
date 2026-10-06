@@ -120,6 +120,11 @@ Next up.
 
 ## v1.3.11 — Programmes & phases  (2026-11-08)
 
+Fork note (2026-10-06): the lightweight date-based block calendar, phase-specific weekly routine
+schedules, deload phases, pause/resume and phase controls described in
+[AI routines and training data](docs/AI_TRAINING.md) are implemented in this fork. The upstream
+milestone remains the place for broader programme work and session-level exercise phases.
+
 - Programmes: routines grouped into a named block over weeks, with deload and rest weeks, several
   per profile (#159, GitLab !98; Discord "Programme mode", "folders", "major good ideas" 1)
 - Session phases — mobility / work / accessory / cooldown — with completion-only exercises for

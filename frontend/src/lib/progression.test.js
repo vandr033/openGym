@@ -432,6 +432,53 @@ describe('double progression', () => {
     expect(p.reps).toBe(8)
   })
 
+  const rangeWorkout = sets => ({
+    unit: 'kg',
+    workouts: [{ d: '2026-01-01', entries: [{
+      id: LIFT, target: { sets: 3, reps: 12, repsMin: 8, weight: 40 }, sets
+    }] }]
+  })
+  const work = (r, extra = {}) => ({ w: 40, r, done: true, ...extra })
+
+  it('requires all three normal work sets to reach the upper bound', () => {
+    expect(nextPrescription(rangeWorkout([work(12), work(12), work(12)]), cfg)).toMatchObject({ kind: 'up', weight: 42.5, reps: 8 })
+    for (const reps of [[12, 12, 11], [12, 11, 12]]) {
+      expect(nextPrescription(rangeWorkout(reps.map(r => work(r))), cfg)).toMatchObject({ kind: 'hold', weight: 40 })
+    }
+  })
+
+  it('does not treat an incomplete set as a successful set at the upper bound', () => {
+    const p = nextPrescription(rangeWorkout([work(12), work(12), work(12, { done: false })]), cfg)
+    expect(p.kind).not.toBe('up')
+    expect(p.weight).toBe(40)
+  })
+
+  it('ignores warm-ups when counting the planned normal working sets', () => {
+    const p = nextPrescription(rangeWorkout([
+      { w: 20, r: 20, done: true, phase: 'warmup' },
+      work(12), work(12), work(12)
+    ]), cfg)
+    expect(p).toMatchObject({ kind: 'up', weight: 42.5, reps: 8 })
+  })
+
+  it.each(['dropset', 'restpause'])('does not count %s rows as normal working sets', type => {
+    const p = nextPrescription(rangeWorkout([work(12), work(12), work(12, { type })]), cfg)
+    expect(p.kind).not.toBe('up')
+    expect(p.weight).toBe(40)
+  })
+
+  it.each(['linear', 'greyskull'])('keeps existing %s set interpretation', policy => {
+    const target = { sets: 2, reps: 12, weight: 40, prog: policy }
+    const rows = [work(12), work(12, { type: 'dropset' })]
+    expect(readSession({ id: LIFT, target, sets: rows }).ok).toBe(true)
+  })
+
+  it('uses the configured increment and returns to the lower rep bound after a raise', () => {
+    const custom = { ...cfg, inc: 1.25 }
+    const p = nextPrescription(rangeWorkout([work(12), work(12), work(12)]), custom)
+    expect(p).toMatchObject({ kind: 'up', weight: 41.25, reps: 8 })
+  })
+
   it('does not raise the weight for a session that only matched its own recorded target, short of the top of the range (issue #278)', () => {
     // The very first logged session for a fresh double-progression exercise gets its target
     // seeded at the bottom of the range (8 here), not the top (12). Hitting exactly that many

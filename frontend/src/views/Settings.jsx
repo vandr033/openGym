@@ -24,7 +24,7 @@ import { limitsFrom, fmtMB, MB } from '../lib/media-limits.js'
 import { setRestAccent } from '../lib/rest-alert.js'
 import { checkForUpdate, downloadAndInstall } from '../lib/update.js'
 import { forgetCoach } from '../lib/coach-api.js'
-import { starterPlanSheet, confirmSheet, importFromApp, importFromHevy, equipmentProfileSheet, plateInventorySheet, menuSheet } from '../sheets.jsx'
+import { starterPlanSheet, confirmSheet, importFromApp, importFromHevy, equipmentProfileSheet, plateInventorySheet, menuSheet, trainingExportSheet } from '../sheets.jsx'
 import Icon from '../components/Icon.jsx'
 import { ServerSyncSection, KeptChangesRows, leaveServer, connectServer, passkeySignIn } from '../components/ServerSync.jsx'
 import { passwordOn, PasswordRow, openPasswordSignIn, openPasswordRegister } from '../components/PasswordAuth.jsx'
@@ -404,6 +404,10 @@ export default function Settings() {
         subtitle={t('Asks for your body weight when a workout starts. Off starts the session straight away.')}>
         <Switch checked={S.weighIn !== false} onChange={v => update(s => { s.weighIn = v })} />
       </Row>
+      <Row icon="heart" iconTint="var(--red)" title={t('Readiness check-in')}
+        subtitle={t('Ask energy, sleep and soreness before a workout. You can skip each time.')}>
+        <Switch checked={!!S.readinessCheckIn} onChange={v => update(s => { s.readinessCheckIn = v })} />
+      </Row>
       {/* One exercise at a time (cards with Prev/Next), the whole session stacked as a
           scrollable list, or that list stripped to just names and set rows (compact).
           Legacy/unknown values read as cards. The running session can override this from
@@ -552,6 +556,9 @@ export default function Settings() {
         accessory="chevron" onClick={importFromHevy} />
       <Row icon="upload" iconTint="var(--blue)" title={t('Import backup')} accessory="chevron" onClick={() => fileRef.current.click()} />
       <Row icon="download" iconTint="var(--blue)" title={t('Export backup (JSON)')} subtitle={hasMedia ? t('Without photos and videos') : undefined} accessory="chevron" onClick={doExport} />
+      <Row icon="sparkles" iconTint="var(--teal)" title={t('Export Training Data for AI')}
+        subtitle={t('Share a focused workout history summary')}
+        accessory="chevron" onClick={trainingExportSheet} />
       {hasMedia && <Row icon="download" iconTint="var(--blue)" title={t('Export with photos & videos (.zip)')} accessory="chevron" onClick={doExportZip} />}
       {hasMedia && <MediaRow />}
       {/* 14 is AUTO_BACKUP_KEEP in lib/mobile.js, written out because the Settings tests mock

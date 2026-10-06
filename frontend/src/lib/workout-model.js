@@ -34,6 +34,9 @@ export function setType(set) {
 export const isDropSet = set => setType(set) === 'dropset'
 export const isRestPauseSet = set => setType(set) === 'restpause'
 
+/** A normal work row that may count toward progression. */
+export const isStraightWorkSet = set => !isWarmupRow(set) && setType(set) === 'straight'
+
 /** A drop-set's weight drops, oldest first; empty for anything else. */
 export function dropsOf(set) {
   const source = objectOf(set)

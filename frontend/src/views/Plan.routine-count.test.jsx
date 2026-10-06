@@ -30,6 +30,7 @@ vi.mock('react-router-dom', () => ({ useNavigate: () => () => {} }))
 vi.mock('../lib/mobile.js', () => ({ MOBILE: false, isAndroid: () => Promise.resolve(false), shareExport: vi.fn(), syncReminder: vi.fn() }))
 vi.mock('../sheets.jsx', () => ({
   starterPlanSheet: vi.fn(), dayAssignSheet: vi.fn(), dayAddRoutineSheet: vi.fn(), planToolsSheet: vi.fn(),
+  programsSheet: vi.fn(), routineImportSheet: vi.fn(), startFlow: vi.fn(),
 }))
 
 let host, root

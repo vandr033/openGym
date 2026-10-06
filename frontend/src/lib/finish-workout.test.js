@@ -19,6 +19,31 @@ describe('completed workout boundary', () => {
     })
   })
 
+  it('keeps a program and phase snapshot on a finished workout', () => {
+    const active = {
+      id: 'active-p', d: '2026-10-20', start: 1000, routineIds: ['routine-1'], name: 'Upper A',
+      program: { programId: 'block', programName: 'Hypertrophy', phaseId: 'deload', phaseName: 'Deload', phaseStart: '2026-10-19', deload: true },
+      deload: true,
+      entries: [{ id: '0025', sets: [{ done: true, w: 60, r: 8 }], target: { sets: 1, reps: 8 } }],
+    }
+    expect(buildCompletedWorkout(active, { end: 2000 })).toMatchObject({
+      program: { programId: 'block', phaseId: 'deload', deload: true },
+      deload: true,
+    })
+  })
+
+  it('preserves optional readiness and set discomfort in workout history', () => {
+    const active = {
+      id: 'active-ready', d: '2026-10-06', start: 1000, routineIds: ['routine-1'], name: 'Upper',
+      readiness: { energy: 4, sleep: 3, soreness: 2 },
+      entries: [{ id: '0025', sets: [{ done: true, w: 60, r: 10, discomfort: { severity: 'mild', note: 'wrist' } }] }],
+    }
+    expect(buildCompletedWorkout(active, { end: 2000 })).toMatchObject({
+      readiness: { energy: 4, sleep: 3, soreness: 2 },
+      entries: [{ sets: [{ discomfort: { severity: 'mild', note: 'wrist' } }] }],
+    })
+  })
+
   // planSec is live-session bookkeeping — the plan a hold displaced before it finished put aside
   // (Workout.startTimed). A finished session keeps only what was logged, so an unfinished row goes
   // back to recording its plan and the key never reaches S.workouts.
@@ -228,6 +253,17 @@ describe('session notes', () => {
     const a = active({})
     expect(buildCompletedWorkout({ ...a, note: 'slept badly' }).note).toBe('slept badly')
     expect('note' in buildCompletedWorkout(a)).toBe(false)
+  })
+
+  it('keeps optional plain-text notes attached to their individual sets', () => {
+    const w = buildCompletedWorkout(active({ sets: [
+      { w: 100, r: 10, done: true, note: 'grip felt unstable' },
+      { w: 100, r: 9, done: true },
+    ] }))
+    expect(w.entries[0].sets).toEqual([
+      { w: 100, r: 10, done: true, note: 'grip felt unstable' },
+      { w: 100, r: 9, done: true },
+    ])
   })
 })
 

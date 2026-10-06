@@ -17,6 +17,7 @@ const workRowsForMode = (entry = {}, mode = 'reps') => {
 // for the hook — and it re-exports this very `t` from core, so nothing changes here except what
 // gets dragged along behind it.
 import { t } from './i18n-core.js'
+import { programRoutineIds } from './programs.js'
 
 // How an exercise is logged (issue #16). This used to be derived from the body part alone,
 // which meant a plank or a farmer's carry could only be timed by filing it under cardio.
@@ -397,6 +398,8 @@ export function effectiveRoutineIds(S, iso) {
   const ov = S.dayPlan[iso]
   if (ov === 'rest') return []
   if (ov && S.routines.some(r => r.id === ov)) return [ov]
+  const programmed = programRoutineIds(S, iso)
+  if (programmed) return programmed
   const wd = new Date(iso + 'T12:00:00').getDay()
   return [].concat(S.week[wd] || []).filter(id => S.routines.some(r => r.id === id))
 }

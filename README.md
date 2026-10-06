@@ -22,7 +22,8 @@ on your phone, synced across your devices, behind your own passkey login.
 [Android APK](https://github.com/DuarteSantos8/openGym/releases/latest) ·
 [Self-hosting guide](docs/SELF_HOSTING.md) ·
 [Roadmap](ROADMAP.md) ·
-[Changelog](CHANGELOG.md)
+[Changelog](CHANGELOG.md) ·
+[AI training guide](docs/AI_TRAINING.md)
 
 </div>
 
@@ -57,6 +58,7 @@ if you want to try it before installing anything.
   editable routines.
 - Move a session to another day without touching the weekly plan. The week starts on Monday or
   Sunday, your choice.
+- Build date-based program blocks with phase-specific weekly schedules and optional deload phases.
 - Supersets, warm-up sets, drop sets and rest-pause, timed exercises (planks, hangs, carries),
   cardio by time and speed, rest time per exercise, planned deloads.
 - Your own exercises, with your own photo, GIF or short video. Location data is stripped on the
@@ -70,6 +72,7 @@ if you want to try it before installing anything.
 - A quiet workout screen: one menu per exercise, the set number as the set's own menu, card or
   list view. Switches in Settings bring the old button rows back if you liked them.
 - Optional effort column as RIR or RPE, colour-coded, with a plain-language line per level.
+- Optional quick readiness check-in, plain-text notes on each set, and set-level discomfort logging.
 - Plate math for barbell, EZ bar, trap bar and Smith machine, worked out from the plates you own.
 - Bodyweight exercises know they carry no load: log reps, add a dip belt if you use one.
 - Per-side reps for lunges and single-arm work, the screen stays awake while you train, and a
@@ -78,8 +81,8 @@ if you want to try it before installing anything.
 **Progress**
 
 - Progression rules per routine or per exercise: linear, Greyskull LP, double progression through a
-  visible rep range, or adding time. Each target explains why it is that number; missed reps never
-  add load, stalls trigger a deload.
+  visible rep range, or adding time. Double progression adds load only when every normal working
+  set reaches the top of its range. Each target explains why it is that number.
 - Estimated 1RM per exercise with its own curve, Structural Balance ratios (Poliquin, Thibaudeau,
   ATG), a year-long activity heatmap.
 - A muscle map in three modes: where your volume went, what is still recovering, and what has gone
@@ -95,6 +98,8 @@ if you want to try it before installing anything.
 - Two devices editing at once merge instead of overwriting each other (see [sync](#how-sync-works)).
 - Import from FitNotes, Strong, Hevy (CSV or API key) and Apple Health weight exports. Export
   everything as one JSON file whenever you like.
+- Import AI-generated routines from JSON and export focused training history for analysis. See the
+  [AI training guide](docs/AI_TRAINING.md).
 - Share a plan as a small file or print it as a PDF.
 - Optional admin dashboard with invite-only signup and an activity log.
 - 17 languages, including right-to-left Arabic. Exercise names and instructions are translated

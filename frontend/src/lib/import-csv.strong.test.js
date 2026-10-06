@@ -39,10 +39,11 @@ describe('a Strong export', () => {
     expect(upper.entries.flatMap(e => e.sets).some(s => s.min === 65)).toBe(false)
   })
 
-  it('keeps the workout note, and a set note on its exercise', () => {
+  it('keeps workout and set notes separate', () => {
     expect(upper.note).toBe('Good day')
     expect(legs.note).toBeUndefined()
-    expect(upper.entries[0].note).toBe('Paused reps')
+    expect(upper.entries[0].note).toBeUndefined()
+    expect(upper.entries[0].sets[1].note).toBe('Paused reps')
     expect(upper.entries[1].note).toBeUndefined()
   })
 
@@ -55,6 +56,15 @@ describe('a Strong export', () => {
 })
 
 describe('a Hevy export with a superset', () => {
+  it('keeps Hevy exercise notes separate from workout and set notes', () => {
+    const source = HEVY.replace('Barbell)",,"",0,"normal",62.5', 'Barbell)",,"Seat 4",0,"normal",62.5')
+    const [w] = parseWorkoutCSV(source, { unit: 'kg' }).workouts
+    const bench = w.entries.find(entry => entry.id === '0025')
+    expect(w.note).toBe('Felt fresh')
+    expect(bench.note).toBe('Seat 4')
+    expect(bench.sets[0].note).toBeUndefined()
+  })
+
   it('puts the exercises sharing a superset_id in one superset, and reads the description as the note', () => {
     const [w] = parseWorkoutCSV(HEVY, { unit: 'kg' }).workouts
     const [bench, raise, pushdown] = w.entries

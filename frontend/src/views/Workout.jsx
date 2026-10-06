@@ -15,7 +15,7 @@ import { t, exerciseNameFor, exerciseNameClass } from '../lib/i18n.js'
 import { api, beacon } from '../lib/api.js'
 import { insertionIndexAfterCurrentUnit, nextUnfinishedUnit, setProgressHighWater, supersetFlowStep, restAfterSet, restOnRecheck, restSecFor, warmupRestSecFor } from '../lib/supersetFlow.js'
 import Media from '../components/Media.jsx'
-import { startFlow, exercisePicker, exConfigSheet, exerciseDetailSheet, finishWorkout, exitWorkoutEdit, workoutCompleteSheet, confirmSheet, exerciseNoteSheet, sessionNoteSheet, renameWorkoutSheet, swapActiveWorkoutExercise, barWeightSheet, menuSheet, effortPickerSheet, exerciseHistorySheet, addRoutineToSessionSheet } from '../sheets.jsx'
+import { startFlow, exercisePicker, exConfigSheet, exerciseDetailSheet, finishWorkout, exitWorkoutEdit, workoutCompleteSheet, confirmSheet, exerciseNoteSheet, setNoteSheet, setDiscomfortSheet, sessionNoteSheet, renameWorkoutSheet, swapActiveWorkoutExercise, barWeightSheet, menuSheet, effortPickerSheet, exerciseHistorySheet, addRoutineToSessionSheet } from '../sheets.jsx'
 import { effortColor } from '../lib/effort.js'
 import Icon from '../components/Icon.jsx'
 import { Button, Check, NumberField } from '../components/ui.jsx'
@@ -26,7 +26,7 @@ import { sessionNoProg, setSessionNoProg, setEntryNoProg, joinSessionNoProg } fr
 import { glyphOf } from '../lib/glyphs.js'
 import { markAllSetsDone, sessionHistory } from '../lib/backfill.js'
 import { bestSetFor } from '../lib/exercise-history.js'
-import { isWarmupRow, isDropSet, isRestPauseSet, dropsOf, clustersOf, addDrop, addCluster, removeDropAt, removeClusterAt, setDropAt, setClusterAt, nextDropWeight, nextBurstReps, isSideSet, makeSideSet, setSideField, toggleSide, addSideDrop, removeSideDropAt, setSideDropAt, addSideCluster, removeSideClusterAt, setSideClusterAt, WEIGHT_ORIGIN_MANUAL } from '../lib/workout-model.js'
+import { isWarmupRow, isStraightWorkSet, isDropSet, isRestPauseSet, dropsOf, clustersOf, addDrop, addCluster, removeDropAt, removeClusterAt, setDropAt, setClusterAt, nextDropWeight, nextBurstReps, isSideSet, makeSideSet, setSideField, toggleSide, addSideDrop, removeSideDropAt, setSideDropAt, addSideCluster, removeSideClusterAt, setSideClusterAt, WEIGHT_ORIGIN_MANUAL } from '../lib/workout-model.js'
 import { canMoveActiveWorkoutUnit, moveActiveWorkoutUnit } from '../lib/active-workout-order.js'
 import { nextOpenSet, workoutKeyAction } from '../lib/workout-keys.js'
 import { MUSCLE_NAME } from '../lib/muscles.js'
@@ -178,6 +178,38 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
   // the session was built so the reason matches the numbers already in the rows.
   const plan = entry.plan
   const guidance = progressionGuidance(plan)
+  const openProgressionWhy = () => {
+    const work = (last?.sets || []).filter(isStraightWorkSet)
+    const previous = work.length ? work.map(s => setLabel(entry.id, s, last.target, speedUnitOf(S))).join(' · ') : null
+    const target = entry.target || {}
+    const current = mode === 'reps'
+      ? ((target.weight > 0 ? fmtNum(target.weight) + ' ' + S.unit + ' · ' : '') + setsRepsOf(target))
+      : setsRepsOf(target)
+    useUI.getState().openSheet(close => <>
+      <h3>{t('Why this target?')}</h3>
+      <div className="list menu-list">
+        <div className="item menu-item"><span className="lrow-i"><Icon name="target" /></span>
+          <div className="grow"><div className="tt">{t('Today’s target')}</div><div className="ss">{current}</div></div></div>
+        {previous && <div className="item menu-item"><span className="lrow-i"><Icon name="history" /></span>
+          <div className="grow"><div className="tt">{t('Last workout')}</div><div className="ss">{previous}{mode === 'reps' ? ' ' + t('reps per work set') : ''}</div></div></div>}
+        {mode === 'reps' && plan?.policy === 'double' && <>
+          <div className="item menu-item"><span className="lrow-i"><Icon name={plan.kind === 'up' ? 'checkCircle' : 'chartLine'} /></span>
+            <div className="grow"><div className="tt">{plan.kind === 'up' ? t('Double progression completed') : t('Progress toward the rep-range ceiling')}</div>
+              <div className="ss">{t(...plan.why)}</div></div></div>
+          <div className="item menu-item"><span className="lrow-i"><Icon name="chartLine" /></span>
+            <div className="grow"><div className="tt">{t('Progression step')}</div><div className="ss">{fmtNum(weightIncrement(target, S.unit))} {S.unit}</div></div></div>
+          {plan?.kind === 'up' && <div className="item menu-item"><span className="lrow-i"><Icon name="arrowUp" /></span>
+            <div className="grow"><div className="tt">{t('Rep target reset')}</div><div className="ss">{t('{0} reps per work set', plan.reps ?? target.repsMin ?? target.reps)}</div></div></div>}
+        </>}
+        {guidance && plan?.policy !== 'double' && <div className="item menu-item"><span className="lrow-i"><Icon name="lightbulb" /></span>
+          <div className="grow"><div className="tt">{t(guidance.policyLabel)}</div><div className="ss">{t(...guidance.why)}</div></div></div>}
+      </div>
+      <div style={{ height: 10 }} />
+      {onProgressionSettings && <Button variant="tinted" onClick={() => { close(); onProgressionSettings() }}>{t('Progression settings')}</Button>}
+      <div style={{ height: 8 }} />
+      <Button variant="ghost" onClick={close}>{t('Done')}</Button>
+    </>)
+  }
   // The plan this exercise was built from (issue #275), on one quiet line in every view — the
   // routine's "2 × 10" is the thing the rows are measured against. When today's rows open
   // somewhere else, the same line says so: progression moved the sets or reps (a bodyweight
@@ -369,6 +401,8 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
       title: (warm ? t('Warm-up') : t('Set {0}', entry.sets.slice(0, i + 1).filter(x => isWarmupRow(x) === warm).length)),
       subtitle: setLabel(entry.id, s, entry.target, speedUnit),
       items: [
+        { icon: 'note', label: s.note ? t('Edit set note') : t('Add set note'), sub: s.note || undefined, onClick: () => setNoteSheet(entryIdx, i) },
+        { icon: 'warning', label: s.discomfort ? t('Edit discomfort') : t('Log discomfort'), sub: s.discomfort ? t(s.discomfort.severity) : undefined, onClick: () => setDiscomfortSheet(entryIdx, i) },
         !warm && mode === 'reps' && !isRestPauseSet(s) && { icon: 'arrowDown', label: t('Drop set'), sub: t('+ Drop'), onClick: () => addDropRow(i) },
         !warm && mode === 'reps' && !isDropSet(s) && { icon: 'bolt', label: t('Rest-pause burst'), sub: t('+ Burst'), onClick: () => addBurstRow(i) },
         { icon: 'trash', label: t('Remove this set'), danger: true, disabled: !editing && entry.sets.length <= 1, onClick: () => onRemoveSetAt(i) },
@@ -544,11 +578,16 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
     {entry.note && <div className="exnote">{entry.note}</div>}
     {planLine}
     {refLine}
-    {guidance && onProgressionSettings && <button type="button" className={'progline' + (plan.kind === 'deload' ? ' warn' : '')}
-      aria-label={t('Open progression settings')} onClick={onProgressionSettings}>
-      <Icon name={plan.kind === 'up' ? 'arrowUp' : plan.kind === 'deload' ? 'arrowDown' : 'lightbulb'} />
-      <span><strong>{t(guidance.policyLabel)}</strong> · {t(...guidance.why)}</span>
-    </button>}
+    {guidance && onProgressionSettings && <div className="progline-wrap">
+      <button type="button" className={'progline' + (plan.kind === 'deload' ? ' warn' : '')}
+        aria-label={t('Open progression settings')} onClick={onProgressionSettings}>
+        <Icon name={plan.kind === 'up' ? 'arrowUp' : plan.kind === 'deload' ? 'arrowDown' : 'lightbulb'} />
+        <span><strong>{t(guidance.policyLabel)}</strong> · {t(...guidance.why)}</span>
+      </button>
+      <button type="button" className="progwhy" aria-label={t('Why this target?')} title={t('Why this target?')} onClick={openProgressionWhy}>
+        <Icon name="info" />
+      </button>
+    </div>}
     </>}
     <div className="card" style={{ marginTop: 10, marginBottom: 0 }}>
       {/* the header carries the same eff3/timed sizing as the rows, or the labels drift off their
@@ -567,7 +606,7 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
             // Unilateral work set: the number sits beside a two-row L/R stack, each side logged
             // and ticked on its own (issue #60).
             <div ref={el => onSetRowRef?.(i, el)} className={'setrow-side' + (s.done ? ' done' : '')}>
-              <button type="button" className="n" aria-label={t('Set {0}', phaseNum)} title={t('More')} onClick={() => openSetMenu(s, i)}>{phaseNum}</button>
+              <button type="button" className={'n' + (s.note || s.discomfort ? ' has-note' : '')} aria-label={t('Set {0}{1}', phaseNum, s.note || s.discomfort ? ', details added' : '')} title={s.note || (s.discomfort && t(s.discomfort.severity)) || t('More')} onClick={() => openSetMenu(s, i)}>{phaseNum}{(s.note || s.discomfort) && <Icon name={s.discomfort ? 'warning' : 'note'} className="set-note-mark" />}</button>
               <div className="side-rows">
                 {sideRow(s, i, 'L', col1, col2, col3)}
                 {sideExtras(s, i, 'L')}
@@ -577,7 +616,7 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
             </div>
           ) : (
           <div ref={el => onSetRowRef?.(i, el)} className={'setrow' + (s.done ? ' done' : '') + (col3 ? ' eff3' : '') + (timed ? ' timed' : '')}>
-            <button type="button" className="n" aria-label={t('Set {0}', phaseNum)} title={t('More')} onClick={() => openSetMenu(s, i)}>{phaseNum}</button>
+            <button type="button" className={'n' + (s.note || s.discomfort ? ' has-note' : '')} aria-label={t('Set {0}{1}', phaseNum, s.note || s.discomfort ? ', details added' : '')} title={s.note || (s.discomfort && t(s.discomfort.severity)) || t('More')} onClick={() => openSetMenu(s, i)}>{phaseNum}{(s.note || s.discomfort) && <Icon name={s.discomfort ? 'warning' : 'note'} className="set-note-mark" />}</button>
             {cell(s, i, col1, 'w')}
             {col2 && cell(s, i, col2, 'r')}
             {col3 && effortCell(s, i, col3)}

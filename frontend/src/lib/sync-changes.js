@@ -25,6 +25,7 @@ const LISTS = {
   w: ['workouts', workoutKey],
   b: ['bodyweight', e => e?.d],
   r: ['routines', r => r?.id],
+  p: ['programs', p => p?.id],
   c: ['customEx', e => e?.id],
 }
 // Not content: the stamp and the revision say when, not what; the running workout never syncs.

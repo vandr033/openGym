@@ -51,6 +51,10 @@ import { stampWorkout } from './lib/sync-merge.js'
 import { weeklyWeights } from './lib/bodyweight.js'
 import { workoutText } from './lib/workout-text.js'
 import { copyText } from './lib/clipboard.js'
+import { activeProgramContext, createProgram, daysBetween, extendPhase, pauseProgram, programHistorySnapshot, resumeProgram, switchPhaseNow } from './lib/programs.js'
+import { buildDeloadRoutine } from './lib/deload.js'
+import { applyRoutineImport, parseRoutineImport, ROUTINE_TEMPLATE } from './lib/routine-import.js'
+import { buildTrainingExport, trainingExportCSV, trainingPeriod, TRAINING_AI_PROMPT, buildExerciseHistoryExport, exerciseHistoryPrompt } from './lib/training-export.js'
 
 const S = () => useStore.getState().S
 const update = (...a) => useStore.getState().update(...a)
@@ -280,6 +284,35 @@ export function bwSheet(opts = {}) {
   const h = ui().openSheet(close => <BwSheet {...opts} close={close} />, { locked: !!opts.required })
   return h
 }
+
+function ReadinessCheckIn({ onDone, onSkip, close }) {
+  const [scores, setScores] = useState({ energy: null, sleep: null, soreness: null })
+  const dimensions = [
+    ['energy', t('Energy')],
+    ['sleep', t('Sleep')],
+    ['soreness', t('Soreness')],
+  ]
+  const ready = dimensions.every(([key]) => Number.isInteger(scores[key]) && scores[key] >= 1 && scores[key] <= 5)
+  const finish = value => { close(); onDone && onDone(value) }
+  return <>
+    <h3>{t('Quick readiness check-in')}</h3>
+    <div className="muted small" style={{ marginBottom: 14 }}>{t('Optional. It won’t change your workout plan.')}</div>
+    {dimensions.map(([key, label]) => <div className="readiness-row" key={key}>
+      <b>{label}</b>
+      <div className="readiness-scores" role="group" aria-label={label}>
+        {[1, 2, 3, 4, 5].map(value => <button key={value} type="button"
+          className={'chip' + (scores[key] === value ? ' on' : '')}
+          aria-pressed={scores[key] === value}
+          onClick={() => setScores(current => ({ ...current, [key]: value }))}>{value}</button>)}
+      </div>
+    </div>)}
+    <div style={{ height: 14 }} />
+    <Button variant="primary" disabled={!ready} onClick={() => finish(scores)}>{t('Start workout')}</Button>
+    <div style={{ height: 8 }} />
+    <Button variant="ghost" onClick={() => { close(); onSkip && onSkip() }}>{t('Skip check-in')}</Button>
+  </>
+}
+export const readinessSheet = options => ui().openSheet(close => <ReadinessCheckIn {...options} close={close} />)
 
 // One weigh-in with its delete button, in the log sheet's recent three and in the full list.
 // The full list asks first (`confirm`): it is months of history scrolled through on a phone, and a
@@ -856,6 +889,10 @@ function ExerciseHistory({ exId }) {
   const onE1 = curve === 'e1rm' && h.e1rmPoints.length > 0
   const unit = h.metric === 'weight' ? st.unit : h.metric === 'reps' ? t('reps') : h.metric === 'sec' ? 's' : t('min')
   const e1Best = useMemo(() => Math.max(0, ...h.e1rmPoints.map(p => p.y)), [h])
+  const copyForAI = async () => {
+    const data = buildExerciseHistoryExport(st, exId, { limit: 8 })
+    toast(await copyText(exerciseHistoryPrompt(data)) ? t('Exercise history copied') : t('Could not copy'))
+  }
   if (!h.total) return <>
     <h3 className={exerciseNameClass(ex)}>{exerciseNameFor(ex)}</h3>
     <div className="empty"><div className="ico"><Icon name="history" /></div>{t('No sessions logged yet')}</div>
@@ -867,6 +904,7 @@ function ExerciseHistory({ exId }) {
   return <>
     <h3 className={exerciseNameClass(ex)} style={{ marginBottom: 2 }}>{exerciseNameFor(ex)}</h3>
     <div className="muted small" style={{ marginBottom: 10 }}>{t('Exercise history')} · {t(h.total === 1 ? '{0} session' : '{0} sessions', h.total)}</div>
+    <Button size="sm" variant="tinted" icon="clipboard" style={{ marginBottom: 8 }} onClick={copyForAI}>{t('Copy history for AI')}</Button>
     {/* Only reps work with a load produces an estimate, so the toggle is absent for the rest. */}
     {h.e1rmPoints.length > 0 && h.metric === 'weight' && <Segmented className="seg-range" value={curve} onChange={setCurve}
       options={[{ value: 'top', label: t('Top set') }, { value: 'e1rm', label: t('Est. 1RM') }]} />}
@@ -1725,6 +1763,377 @@ export const effortPickerSheet = (kind, value, onPick) =>
 
 /* ============================ share / print / import a plan ============================ */
 export const planToolsSheet = () => ui().openSheet(close => <PlanTools close={close} />)
+export const programsSheet = () => ui().openSheet(close => <ProgramManager close={close} />)
+export const routineImportSheet = () => ui().openSheet(close => <RoutineImport close={close} />)
+export const trainingExportSheet = () => ui().openSheet(close => <TrainingExport close={close} />)
+export const generateDeloadSheet = routineId => ui().openSheet(close => <GenerateDeload routineId={routineId} close={close} />)
+
+function TrainingExport({ close }) {
+  const st = useStore(s => s.S)
+  const [preset, setPreset] = useState('6w')
+  const [range, setRange] = useState(() => trainingPeriod('6w', todayISO()))
+  const presets = [
+    ['7d', t('Last 7 days')], ['14d', t('Last 14 days')], ['4w', t('Last 4 weeks')],
+    ['6w', t('Last 6 weeks')], ['custom', t('Custom range')],
+  ]
+  const setPresetValue = value => {
+    setPreset(value)
+    if (value !== 'custom') setRange(trainingPeriod(value, todayISO()))
+  }
+  const valid = !!range.from && !!range.to && range.from <= range.to
+  const data = useMemo(() => buildTrainingExport(st, range), [st, range])
+  const json = JSON.stringify(data)
+  const aiText = TRAINING_AI_PROMPT + '\n' + JSON.stringify(data, null, 2)
+  const csv = trainingExportCSV(data)
+  const download = async (content, filename, type) => {
+    if (MOBILE) { try { await shareExport(content, filename) } catch { /* dismissed */ }; return }
+    const url = URL.createObjectURL(new Blob([content], { type }))
+    const anchor = document.createElement('a')
+    anchor.href = url; anchor.download = filename; anchor.click()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
+  const downloadJson = () => download(json, 'opengym-training-export.json', 'application/json')
+  const downloadCsv = () => download(csv, 'opengym-training-export.csv', 'text/csv;charset=utf-8')
+  const copy = async (value, success) => toast(await copyText(value) ? t(success) : t('Could not copy'))
+  return <>
+    <h3>{t('Export Training Data for AI')}</h3>
+    <div className="muted small" style={{ marginBottom: 12 }}>{t('A focused training summary. It does not include profile settings or other backup data.')}</div>
+    <label className="small dim" htmlFor="training-export-preset">{t('Date range')}</label>
+    <select id="training-export-preset" className="input" value={preset} onChange={e => setPresetValue(e.target.value)}>
+      {presets.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+    </select>
+    {preset === 'custom' && <div className="training-export-range">
+      <label><span className="small dim">{t('From')}</span><input className="input" type="date" value={range.from} onChange={e => setRange(current => ({ ...current, from: e.target.value }))} /></label>
+      <label><span className="small dim">{t('To')}</span><input className="input" type="date" value={range.to} onChange={e => setRange(current => ({ ...current, to: e.target.value }))} /></label>
+    </div>}
+    {!valid && <div className="small" role="alert" style={{ color: 'var(--red)', marginTop: 8 }}>{t('The start date must be on or before the end date.')}</div>}
+    <div className="small dim" style={{ margin: '8px 2px 12px' }}>
+      {t('{0} workouts and {1} bodyweight entries', data.workouts.length, data.bodyWeight.length)}
+    </div>
+    <Button variant="primary" icon="download" disabled={!valid} onClick={downloadJson}>{t('Download JSON')}</Button>
+    <Button variant="ghost" icon="clipboard" disabled={!valid} onClick={() => copy(json, 'Copied')}>{t('Copy JSON')}</Button>
+    <Button variant="tinted" icon="sparkles" disabled={!valid} onClick={() => copy(aiText, 'Prompt and data copied')}>{t('Copy AI Prompt + Data')}</Button>
+    <Button variant="ghost" icon="download" disabled={!valid} onClick={downloadCsv}>{t('Download CSV')}</Button>
+    <div style={{ height: 8 }} />
+    <Button variant="ghost" onClick={close}>{t('Close')}</Button>
+  </>
+}
+
+function GenerateDeload({ routineId, close }) {
+  const st = useStore(s => s.S)
+  const routine = st.routines.find(item => item.id === routineId)
+  const [load, setLoad] = useState(0.85)
+  const [sets, setSets] = useState(0.5)
+  if (!routine) return null
+  const create = () => {
+    const base = routine.name + ' · Deload'
+    let name = base, version = 2
+    const names = new Set(st.routines.map(item => item.name.toLowerCase()))
+    while (names.has(name.toLowerCase())) name = base + ' (' + version++ + ')'
+    const copy = buildDeloadRoutine(st, routine, { id: uid(), name, loadMultiplier: load, setMultiplier: sets })
+    update(s => { s.routines.push(copy) })
+    close()
+    toast(t('Deload version created'))
+    nav('/plan/r/' + copy.id)
+  }
+  return <>
+    <h3>{t('Generate deload version')}</h3>
+    <div className="muted small" style={{ marginBottom: 14 }}>{t('Creates a separate routine copy. Your current routine and history stay intact.')}</div>
+    <Stepper label={t('Load multiplier')} unit="×" value={load} step={0.05} min={0.3} max={1} onChange={setLoad} />
+    <Stepper label={t('Set multiplier')} unit="×" value={sets} step={0.05} min={0.1} max={1} onChange={setSets} />
+    <div className="small dim" style={{ margin: '8px 2px 14px' }}>{t('Loads use each exercise’s configured increment or plate grid. The copy is excluded from progression.')}</div>
+    <Button variant="primary" onClick={create}>{t('Create deload routine')}</Button>
+    <div style={{ height: 8 }} />
+    <Button variant="ghost" onClick={close}>{t('Cancel')}</Button>
+  </>
+}
+
+function ProgramManager({ close }) {
+  const st = useStore(s => s.S)
+  const [draft, setDraft] = useState(null)
+  const [error, setError] = useState('')
+  const today = todayISO()
+  const active = (st.programs || []).find(p => p.id === st.activeProgramId)
+  const activePhase = activeProgramContext(st, today)
+  const routineOptions = (st.routines || []).map(r => ({ value: r.id, label: r.name }))
+  const defaultSchedule = Object.fromEntries(Array.from({ length: 7 }, (_, day) => [
+    day, [].concat(st.week?.[day] || []).filter(Boolean)
+  ]))
+  const startDraft = () => {
+    setError('')
+    setDraft({
+      name: '',
+      startDate: today,
+      phases: [{ name: 'Training', weeks: 6, schedule: defaultSchedule, deload: false }]
+    })
+  }
+  const editPhase = (index, change) => setDraft(current => ({
+    ...current,
+    phases: current.phases.map((phase, i) => i === index ? { ...phase, ...change } : phase)
+  }))
+  const save = () => {
+    try {
+      const program = createProgram({ ...draft, id: uid() })
+      update(s => {
+        s.programs = [...(s.programs || []), program]
+        s.activeProgramId = program.id
+      })
+      setDraft(null)
+      toast(t('Program created'))
+    } catch (e) { setError(e.message) }
+  }
+  const setActive = id => update(s => { s.activeProgramId = id })
+  const saveProgram = (id, fn) => update(s => {
+    const index = (s.programs || []).findIndex(p => p.id === id)
+    if (index >= 0) s.programs[index] = fn(s.programs[index])
+  })
+
+  if (draft) return <>
+    <h3>{t('New program')}</h3>
+    <div className="program-form-scroll">
+      <label className="small dim" htmlFor="program-name">{t('Program name')}</label>
+      <input id="program-name" className="input" maxLength={80} value={draft.name}
+        onChange={e => setDraft({ ...draft, name: e.target.value })} />
+      <label className="small dim" htmlFor="program-start">{t('Start date')}</label>
+      <input id="program-start" className="input" type="date" value={draft.startDate}
+        onChange={e => setDraft({ ...draft, startDate: e.target.value })} />
+      {draft.phases.map((phase, index) => <section className="program-phase-edit" key={index}>
+        <div className="row between">
+          <h4 className="sec">{t('Phase {0}', index + 1)}</h4>
+          {draft.phases.length > 1 && <button className="iconbtn sm" aria-label={t('Remove phase')}
+            onClick={() => setDraft({ ...draft, phases: draft.phases.filter((_, i) => i !== index) })}><Icon name="xmark" /></button>}
+        </div>
+        <input className="input" maxLength={80} aria-label={t('Phase name')} placeholder={t('Phase name')}
+          value={phase.name} onChange={e => editPhase(index, { name: e.target.value })} />
+        <div className="row program-duration">
+          <label htmlFor={'phase-weeks-' + index}>{t('Duration')}</label>
+          <input id={'phase-weeks-' + index} className="input" type="number" min="1" max="52"
+            value={phase.weeks} onChange={e => editPhase(index, { weeks: Number(e.target.value) })} />
+          <span className="small dim">{t('weeks')}</span>
+        </div>
+        <label className="row program-deload">
+          <input type="checkbox" checked={phase.deload === true}
+            onChange={e => editPhase(index, { deload: e.target.checked })} />
+          <span>{t('Deload phase — keep work out of progression')}</span>
+        </label>
+        <div className="program-days">
+          {weekOrder(weekStartOf(st)).map(day => <MultiSelectRow key={day}
+            title={t(DAYN[day])} sheetTitle={t('Routines · {0}', t(DAYN[day]))}
+            values={phase.schedule?.[day] || []} options={routineOptions}
+            onToggle={id => editPhase(index, {
+              schedule: { ...phase.schedule, [day]: (phase.schedule?.[day] || []).includes(id)
+                ? phase.schedule[day].filter(item => item !== id)
+                : [...(phase.schedule?.[day] || []), id] }
+            })}
+            noneLabel={t('Rest')} doneLabel={t('Done')} />)}
+        </div>
+      </section>)}
+      <Button variant="ghost" icon="plus" disabled={draft.phases.length >= 16}
+        onClick={() => setDraft({ ...draft, phases: [...draft.phases, {
+          name: t('Phase {0}', draft.phases.length + 1), weeks: 1,
+          schedule: { ...draft.phases.at(-1).schedule }, deload: false
+        }] })}>{t('Add phase')}</Button>
+      {error && <div className="small" role="alert" style={{ color: 'var(--red)', marginTop: 8 }}>{t(error)}</div>}
+      <div style={{ height: 12 }} />
+      <Button variant="primary" onClick={save}>{t('Create program')}</Button>
+      <div style={{ height: 8 }} />
+      <Button variant="ghost" onClick={() => setDraft(null)}>{t('Cancel')}</Button>
+    </div>
+  </>
+
+  return <>
+    <h3>{t('Programs')}</h3>
+    <div className="muted small" style={{ marginBottom: 12 }}>{t('Set a routine schedule for each phase. Phases change automatically by date.')}</div>
+    {(st.programs || []).map(program => {
+      const context = activeProgramContext({ ...st, activeProgramId: program.id }, today)
+      const isActive = st.activeProgramId === program.id
+      const status = program.pausedAt ? t('Paused')
+        : context ? t('{0} · week {1} of {2}', context.phase.name,
+          Math.min(context.phase.weeks, Math.floor((daysBetween(context.start, today) || 0) / 7) + 1), context.phase.weeks)
+          : today < program.startDate ? t('Upcoming')
+            : t('Complete')
+      return <section className={'program-saved' + (isActive ? ' is-active' : '')} key={program.id}>
+        <div className="row between">
+          <div className="grow"><div className="tt">{program.name}</div><div className="ss">{status}</div></div>
+          {!isActive && <Button size="sm" variant="ghost" onClick={() => setActive(program.id)}>{t('Use program')}</Button>}
+        </div>
+        {isActive && context && (() => {
+          const next = program.phases[context.index + 1]
+          return <div className="program-current">
+            <div className="small">{t('Current routines')}: {context.phase.schedule && Object.values(context.phase.schedule).flat().map(id => st.routines.find(r => r.id === id)?.name).filter(Boolean).join(', ') || t('Rest')}</div>
+            {next && <div className="small dim">{t('Next')}: {next.name} · {t('starts')} {next.startsOn}</div>}
+            <div className="row program-actions">
+              <Button size="sm" variant="ghost" onClick={() => saveProgram(program.id, p => extendPhase(p, context.index))}>{t('Extend one week')}</Button>
+              <Button size="sm" variant="ghost" onClick={() => saveProgram(program.id, p => pauseProgram(p, today))}>{t('Pause')}</Button>
+            </div>
+          </div>
+        })()}
+        {isActive && program.pausedAt && <Button size="sm" variant="ghost"
+          onClick={() => saveProgram(program.id, p => resumeProgram(p, today))}>{t('Resume')}</Button>}
+        <div className="program-phase-list">
+          {program.phases.map((phase, index) => <div className="row between small" key={phase.id || index}>
+            <span>{phase.name} · {phase.weeks} {t('weeks')}{phase.deload ? ' · ' + t('Deload') : ''}</span>
+            {isActive && !program.pausedAt && (context ? index > context.index : phase.startsOn > today) &&
+              <button className="textbtn" onClick={() => saveProgram(program.id, p => switchPhaseNow(p, index, today))}>{t('Switch now')}</button>}
+          </div>)}
+        </div>
+      </section>
+    })}
+    <div style={{ height: 12 }} />
+    <Button variant="primary" icon="plus" onClick={startDraft}>{t('Create program')}</Button>
+    <div style={{ height: 8 }} />
+    <Button variant="ghost" onClick={close}>{t('Done')}</Button>
+  </>
+}
+
+function RoutineImport({ close }) {
+  const st = useStore(s => s.S)
+  const fileRef = useRef(null)
+  const [text, setText] = useState('')
+  const [parsed, setParsed] = useState(null)
+  const [choices, setChoices] = useState({})
+  const [collision, setCollision] = useState('version')
+  const [applySchedule, setApplySchedule] = useState(true)
+  const [error, setError] = useState('')
+  const template = JSON.stringify(ROUTINE_TEMPLATE, null, 2)
+  const prompt = [
+    'Create a gym routine using the openGym JSON format below.',
+    'Return only valid JSON. Do not include Markdown. Do not use internal exercise IDs.',
+    'Use conventional exercise names. Include sets, rep ranges, rest times, progression type, progression step, and notes where appropriate.',
+    '',
+    template
+  ].join('\n')
+  const parseText = value => {
+    try {
+      const result = parseRoutineImport(value, { unit: st.unit || 'kg', state: st })
+      const initial = {}
+      result.routines.forEach((routine, ri) => routine.exercises.forEach((exercise, ei) => {
+        initial[ri + ':' + ei] = exercise.match.selectedId
+      }))
+      setText(value)
+      setChoices(initial)
+      setApplySchedule(result.schedule.length > 0)
+      setParsed(result)
+      setError('')
+    } catch (e) { setParsed(null); setError(e.message) }
+  }
+  const pickFile = event => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => parseText(String(reader.result || ''))
+    reader.onerror = () => setError(t('Could not read that file.'))
+    reader.readAsText(file)
+  }
+  const downloadTemplate = async () => {
+    const name = 'opengym-routine-template.json'
+    if (MOBILE) { try { await shareExport(template, name) } catch { /* dismissed */ }; return }
+    const blob = new Blob([template], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url; anchor.download = name; anchor.click()
+    URL.revokeObjectURL(url)
+  }
+  const updateChoice = (key, value) => setChoices(current => ({ ...current, [key]: value }))
+  const collisions = parsed ? parsed.routines.filter(r =>
+    (st.routines || []).some(existing => existing.name.trim().toLowerCase() === r.name.toLowerCase())) : []
+  const scheduleChanges = parsed?.schedule.length ? Array.from({ length: 7 }, (_, day) => {
+    const before = [].concat(st.week?.[day] || []).map(id => st.routines.find(routine => routine.id === id)?.name).filter(Boolean)
+    const after = parsed.schedule.filter(item => item.day === day).map(item => item.routine)
+    return { day, before, after }
+  }).filter(item => item.before.join('\u0000') !== item.after.join('\u0000')) : []
+  const unresolved = parsed?.routines.some((routine, ri) => routine.exercises.some((exercise, ei) =>
+    exercise.match.status === 'ambiguous' && !choices[ri + ':' + ei]))
+  const apply = () => {
+    try {
+      update(s => applyRoutineImport(s, parsed, { choices, collision, applySchedule }))
+      close()
+      toast(t('Imported {0} routines', parsed.routines.length))
+      nav('/plan')
+    } catch (e) { setError(e.message) }
+  }
+  const matchLabel = status => ({
+    exact: t('Exact match'), likely: t('Likely match — confirm'), ambiguous: t('Several possible matches'),
+    unmatched: t('No match — create a custom exercise')
+  })[status]
+
+  if (parsed) return <>
+    <h3>{t('Review routine import')}</h3>
+    <div className="muted small" style={{ marginBottom: 10 }}>{t('Check exercise matches and schedule changes before importing.')}</div>
+    <div className="routine-import-scroll">
+      <div className="routine-import-summary">
+        <b>{t('Created routines')}: {parsed.routines.length}</b>
+        <span>{t('Exact')}: {parsed.routines.flatMap(r => r.exercises).filter(e => e.match.status === 'exact').length}</span>
+        <span>{t('Likely')}: {parsed.routines.flatMap(r => r.exercises).filter(e => e.match.status === 'likely').length}</span>
+        <span>{t('Unmatched')}: {parsed.routines.flatMap(r => r.exercises).filter(e => e.match.status === 'unmatched' || e.match.status === 'ambiguous').length}</span>
+      </div>
+      {parsed.routines.map((routine, ri) => <section className="routine-import-routine" key={routine.name}>
+        <div className="row between">
+          <b>{routine.name}</b>
+          {routine.deload && <span className="tag">{t('Deload')}</span>}
+        </div>
+        {routine.exercises.map((exercise, ei) => {
+          const key = ri + ':' + ei
+          const selected = choices[key] ?? ''
+          return <div className="routine-import-exercise" key={key}>
+            <div className="tt">{exercise.name}</div>
+            <div className="small dim">{matchLabel(exercise.match.status)}</div>
+            {exercise.match.status === 'exact'
+              ? <div className="small">{exercise.match.candidates[0]?.name}</div>
+              : <select className="input routine-import-select" aria-label={t('Match for {0}', exercise.name)}
+                value={selected} onChange={event => updateChoice(key, event.target.value)}>
+                <option value="">{t('Choose a match')}</option>
+                {exercise.match.candidates.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.name}</option>)}
+                <option value="custom">{t('Create custom exercise: {0}', exercise.name)}</option>
+              </select>}
+            <div className="small dim">{exercise.config.sets} × {exercise.config.repsMin || exercise.config.reps}–{exercise.config.reps}{exercise.config.weight ? ' · ' + exercise.config.weight + ' ' + (st.unit || 'kg') : ''}</div>
+          </div>
+        })}
+      </section>)}
+      {parsed.schedule.length > 0 && <section className="routine-import-schedule">
+        <b>{t('Schedule changes')}</b>
+        <div className="small dim">{scheduleChanges.map(item => `${t(DAYN[item.day])}: ${item.before.join(' + ') || t('Rest')} → ${item.after.join(' + ') || t('Rest')}`).join(' · ') || t('No weekly schedule changes.')}</div>
+        <label className="row">
+          <input type="checkbox" checked={applySchedule} onChange={e => setApplySchedule(e.target.checked)} />
+          <span>{t('Apply this as my weekly schedule')}</span>
+        </label>
+      </section>}
+      {collisions.length > 0 && <section className="routine-import-collision">
+        <b>{t('Routine names already in your plan')}</b>
+        <div className="small dim">{collisions.map(r => r.name).join(', ')}</div>
+        <select className="input" value={collision} onChange={e => setCollision(e.target.value)} aria-label={t('When a routine name already exists')}>
+          <option value="version">{t('Create new version (default)')}</option>
+          <option value="replace">{t('Replace and archive the old definition')}</option>
+          <option value="cancel">{t('Cancel import')}</option>
+        </select>
+      </section>}
+    </div>
+    {error && <div className="small" role="alert" style={{ color: 'var(--red)', margin: '8px 0' }}>{t(error)}</div>}
+    <div style={{ height: 10 }} />
+    <Button variant="primary" disabled={!!unresolved || collision === 'cancel'} onClick={apply}>{t('Import routines')}</Button>
+    <div style={{ height: 8 }} />
+    <Button variant="ghost" onClick={() => { setParsed(null); setError('') }}>{t('Back')}</Button>
+  </>
+
+  return <>
+    <h3>{t('Import Routine')}</h3>
+    <div className="muted small" style={{ marginBottom: 12 }}>{t('Paste or choose JSON made with the openGym routine format. You can review every match before anything changes.')}</div>
+    <textarea className="input routine-import-input" rows={8} value={text} onChange={e => setText(e.target.value)}
+      placeholder={'{\n  "format": "opengym-routine-v1",\n  "routines": [...]\n}'} />
+    <Button variant="primary" onClick={() => parseText(text)} disabled={!text.trim()}>{t('Review JSON')}</Button>
+    <div style={{ height: 12 }} />
+    <Button variant="ghost" icon="folder" onClick={() => fileRef.current?.click()}>{t('Choose JSON file')}</Button>
+    <input ref={fileRef} type="file" accept="application/json,.json" onChange={pickFile} hidden />
+    {error && <div className="small" role="alert" style={{ color: 'var(--red)', marginTop: 8 }}>{t(error)}</div>}
+    <h4 className="sec">{t('For ChatGPT')}</h4>
+    <Button size="sm" variant="ghost" onClick={downloadTemplate}>{t('Download JSON template')}</Button>
+    <Button size="sm" variant="ghost" onClick={async () => toast(await copyText(template) ? t('Copied') : t('Could not copy'))}>{t('Copy JSON template')}</Button>
+    <Button size="sm" variant="tinted" onClick={async () => toast(await copyText(prompt) ? t('Prompt copied') : t('Could not copy'))}>{t('Copy ChatGPT prompt')}</Button>
+    <div style={{ height: 8 }} />
+    <Button variant="ghost" onClick={close}>{t('Cancel')}</Button>
+  </>
+}
 
 function PlanTools({ close }) {
   const st = useStore(s => s.S)
@@ -1999,6 +2408,14 @@ function WorkoutDetail({ w, close }) {
       {ex && <Thumb ex={ex} />}
       <div className="grow"><div className={`tt ${exerciseNameClass(ex)}`} style={{ fontWeight: 600 }}>{nameOf(e)} {w.prs && w.prs.includes(e.id) && <span className="pr"><Icon name="trophy" />PR</span>}</div>
         <div className="ss">{e.sets.filter(hasCompletedWork).map(s => setLabel(e.id, s, e.target, speedUnitOf(st))).join('  ·  ') || t('no sets')}</div>
+        {e.sets.map((s, setIdx) => s.note && <button key={setIdx} type="button" className="small dim workout-set-note"
+          onClick={event => { event.stopPropagation(); setNoteSheet(i, setIdx, w) }}>
+          <Icon name="note" />{t('Set {0}: {1}', setIdx + 1, s.note)}
+        </button>)}
+        {e.sets.some(hasCompletedWork) && <button type="button" className="small dim workout-set-details"
+          onClick={event => { event.stopPropagation(); workoutSetDetailsSheet(i, w) }}>
+          <Icon name="pencil" />{t('Edit set notes & discomfort')}
+        </button>}
         {e.note && <div className="small dim" style={{ marginTop: 3 }}>
           {e.notePin && <Icon name="flag" style={{ fontSize: 12, marginInlineEnd: 4, verticalAlign: '-1px', color: 'var(--yellow)' }} />}{e.note}
         </div>}</div>
@@ -2166,15 +2583,25 @@ export function WorkoutRow({ w, onClick }) {
 /* ============================ workout lifecycle ============================ */
 // `routineIds` accepts `string | string[] | null` — `[r.id]` for one routine,
 // `effectiveRoutineIds(...)` for today's planned session, `[]` / null for explicit freestyle.
-export function startFlow(routineIds) {
+export function startFlow(routineIds, { deload = false } = {}) {
+  const startAfterCheckin = (bw, readiness) => beginWorkout(routineIds, bw, { deload, readiness })
+  const askReadiness = bw => {
+    if (S().readinessCheckIn) readinessSheet({
+      onDone: readiness => startAfterCheckin(bw, readiness),
+      onSkip: () => startAfterCheckin(bw, null),
+    })
+    else startAfterCheckin(bw, null)
+  }
   // The weigh-in is a setting (Settings → During a workout, issue #137): off goes straight
   // into the session with no body weight on it, same as "Start without weighing in".
-  if (S().weighIn === false) { beginWorkout(routineIds, null); return }
-  bwSheet({ required: true, onDone: bw => beginWorkout(routineIds, bw) })
+  if (S().weighIn === false) { askReadiness(null); return }
+  bwSheet({ required: true, onDone: askReadiness })
 }
-export function beginWorkout(routineIds, bw) {
+export function beginWorkout(routineIds, bw, { deload: forceDeload = false, readiness = null } = {}) {
   const st = S()
-  const { entries, routineIds: rids, routines } = buildCombinedEntries(st, routineIds)
+  const context = activeProgramContext(st, todayISO())
+  const deload = forceDeload || context?.deload === true
+  const { entries, routineIds: rids, routines } = buildCombinedEntries(st, routineIds, { deload })
   update(s => {
     s.active = {
       id: uid(), d: todayISO(), start: Date.now(),
@@ -2182,6 +2609,9 @@ export function beginWorkout(routineIds, bw) {
       // exercise came from. No top-level `excludeFromProgression` — per-entry `noProg` does it.
       routineIds: rids,
       name: routines.length ? deriveSessionName(routines.map(r => r.name)) : t('Freestyle'),
+      ...(context ? { program: programHistorySnapshot({ ...context, deload }) } : {}),
+      ...(deload ? { deload: true } : {}),
+      ...(readiness ? { readiness: { ...readiness } } : {}),
       bw: bw || null, cur: 0, entries,
       // Snapshot the layout at start so the header ⋮ can change it for this session only —
       // changing the saved default (Settings → Workout view) mid-session leaves it alone.
@@ -2278,12 +2708,16 @@ function beginBackfill({ iso, time, durationMin, routineIds, replaceId }) {
   const st = S()
   const start = backfillStart(iso, time)
   const past = historyAsOf(st, { d: iso, start, replaceId })
-  const { entries, routineIds: rids, routines } = buildCombinedEntries(past, routineIds || [])
+  const context = activeProgramContext(past, iso)
+  const deload = context?.deload === true
+  const { entries, routineIds: rids, routines } = buildCombinedEntries(past, routineIds || [], { deload })
   update(s => {
     s.active = {
       id: uid(), d: iso, start,
       routineIds: rids,
       name: routines.length ? deriveSessionName(routines.map(r => r.name)) : t('Freestyle'),
+      ...(context ? { program: programHistorySnapshot(context) } : {}),
+      ...(deload ? { deload: true } : {}),
       bw: null, cur: 0, entries,
       backfill: { durationMin, replaceId: replaceId || null },
       // Same layout snapshot as a live session (see beginWorkout).
@@ -2465,6 +2899,121 @@ function ExerciseNote({ entryIdx, close }) {
   </>
 }
 export const exerciseNoteSheet = entryIdx => ui().openSheet(close => <ExerciseNote entryIdx={entryIdx} close={close} />)
+
+function SetNote({ entryIdx, setIdx, workout, close }) {
+  const noteRef = useRef(null)
+  const onNoteFocus = useSheetKeyboard(noteRef)
+  const st = useStore(s => s.S)
+  const update = useStore(s => s.update)
+  const record = workout ? st.workouts.find(x => sameWorkout(x, workout)) : null
+  const row = workout ? record?.entries?.[entryIdx]?.sets?.[setIdx] : st.active?.entries?.[entryIdx]?.sets?.[setIdx]
+  const [note, setNote] = useState(row?.note || '')
+  useEffect(() => { if (!row) close() }, [!row])
+  if (!row) return null
+
+  const save = () => {
+    const text = note.trim().slice(0, NOTE_MAX)
+    update(s => {
+      const rec = workout ? s.workouts.find(x => sameWorkout(x, workout)) : null
+      const target = workout
+        ? rec?.entries?.[entryIdx]?.sets?.[setIdx]
+        : s.active?.entries?.[entryIdx]?.sets?.[setIdx]
+      if (!target || text === (target.note || '')) return
+      if (text) target.note = text
+      else delete target.note
+      if (rec) stampWorkout(rec)
+    })
+    close()
+  }
+
+  return <>
+    <h3>{t('Set note')}</h3>
+    <textarea ref={noteRef} className="input" rows={3} maxLength={NOTE_MAX} value={note}
+      placeholder={t('A short note about this set.')}
+      onFocus={onNoteFocus} onChange={event => setNote(event.target.value)} />
+    <div style={{ height: 14 }} />
+    <Button variant="primary" onClick={save}>{t('Save')}</Button>
+  </>
+}
+export const setNoteSheet = (entryIdx, setIdx, workout = null) =>
+  ui().openSheet(close => <SetNote entryIdx={entryIdx} setIdx={setIdx} workout={workout} close={close} />)
+
+function SetDiscomfort({ entryIdx, setIdx, workout, close }) {
+  const noteRef = useRef(null)
+  const onNoteFocus = useSheetKeyboard(noteRef)
+  const st = useStore(s => s.S)
+  const update = useStore(s => s.update)
+  const record = workout ? st.workouts.find(x => sameWorkout(x, workout)) : null
+  const row = workout ? record?.entries?.[entryIdx]?.sets?.[setIdx] : st.active?.entries?.[entryIdx]?.sets?.[setIdx]
+  const [severity, setSeverity] = useState(row?.discomfort?.severity || 'none')
+  const [note, setNote] = useState(row?.discomfort?.note || '')
+  useEffect(() => { if (!row) close() }, [!row])
+  if (!row) return null
+  const options = [
+    ['none', t('None')], ['mild', t('Mild')], ['moderate', t('Moderate')], ['severe', t('Severe')]
+  ]
+  const save = () => {
+    const text = note.trim().slice(0, NOTE_MAX)
+    const value = severity === 'none' ? null : { severity, ...(text ? { note: text } : {}) }
+    update(s => {
+      const rec = workout ? s.workouts.find(x => sameWorkout(x, workout)) : null
+      const target = workout ? rec?.entries?.[entryIdx]?.sets?.[setIdx] : s.active?.entries?.[entryIdx]?.sets?.[setIdx]
+      if (!target) return
+      if (value) target.discomfort = value
+      else delete target.discomfort
+      if (rec) stampWorkout(rec)
+    })
+    close()
+  }
+  return <>
+    <h3>{t('Set discomfort')}</h3>
+    <div className="muted small" style={{ marginBottom: 12 }}>{t('Logging only. This does not change your plan.')}</div>
+    <div className="discomfort-options" role="group" aria-label={t('Discomfort severity')}>
+      {options.map(([value, label]) => <button type="button" key={value}
+        className={'chip' + (severity === value ? ' on' : '')} aria-pressed={severity === value}
+        onClick={() => setSeverity(value)}>{label}</button>)}
+    </div>
+    <textarea ref={noteRef} className="input" rows={3} maxLength={NOTE_MAX} value={note}
+      aria-label={t('Optional details')} placeholder={t('Optional details')}
+      onFocus={onNoteFocus} onChange={event => setNote(event.target.value)} />
+    <div style={{ height: 14 }} />
+    <Button variant="primary" onClick={save}>{t('Save')}</Button>
+  </>
+}
+export const setDiscomfortSheet = (entryIdx, setIdx, workout = null) =>
+  ui().openSheet(close => <SetDiscomfort entryIdx={entryIdx} setIdx={setIdx} workout={workout} close={close} />)
+
+function WorkoutSetDetails({ entryIdx, workout, close }) {
+  const st = useStore(s => s.S)
+  const record = workout ? st.workouts.find(x => sameWorkout(x, workout)) : null
+  const entry = record?.entries?.[entryIdx] || workout?.entries?.[entryIdx]
+  if (!entry) return null
+  const exName = (st.customEx || []).find(ex => ex.id === entry.id)?.n || exerciseNameText(exOr(entry.id))
+  return <>
+    <h3>{exName}</h3>
+    <div className="muted small" style={{ marginBottom: 10 }}>{t('Edit notes and discomfort for each set.')}</div>
+    <div className="workout-set-details-list">
+      {entry.sets.map((set, setIdx) => <div className="workout-set-detail-row" key={setIdx}>
+        <div className="grow">
+          <b>{t('Set {0}', setIdx + 1)}</b>
+          <div className="small dim">{setLabel(entry.id, set, entry.target, speedUnitOf(st))}</div>
+          {set.note && <div className="small dim">{set.note}</div>}
+          {set.discomfort && <div className="small discomfort-line"><Icon name="warning" />{t(set.discomfort.severity)}{set.discomfort.note ? ': ' + set.discomfort.note : ''}</div>}
+        </div>
+        <div className="row" style={{ gap: 3 }}>
+          <button type="button" className={'iconbtn' + (set.note ? ' on' : '')} aria-label={t('Edit set note')}
+            title={set.note ? t('Edit set note') : t('Add set note')} onClick={() => setNoteSheet(entryIdx, setIdx, workout)}><Icon name="note" /></button>
+          <button type="button" className={'iconbtn' + (set.discomfort ? ' on' : '')} aria-label={t('Log discomfort')}
+            title={set.discomfort ? t('Edit discomfort') : t('Log discomfort')} onClick={() => setDiscomfortSheet(entryIdx, setIdx, workout)}><Icon name="warning" /></button>
+        </div>
+      </div>)}
+    </div>
+    <div style={{ height: 12 }} />
+    <Button variant="ghost" onClick={close}>{t('Close')}</Button>
+  </>
+}
+export const workoutSetDetailsSheet = (entryIdx, workout) =>
+  ui().openSheet(close => <WorkoutSetDetails entryIdx={entryIdx} workout={workout} close={close} />)
 
 /* The session note: how the whole workout went, as opposed to how one exercise went. It lives
    on the active session, so buildCompletedWorkout carries it onto the finished workout and it

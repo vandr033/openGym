@@ -18,7 +18,7 @@
 
 import { modeOf, repStep, rerampWarmups, isBw, isPerSide, entryExcluded, entryRoutineId } from './history.js'
 import { EXIDX, isAssisted, isLoadedEq } from './exercises.js'
-import { isWarmupRow, isSideSet, syncSideAggregate, makeSideSet } from './workout-model.js'
+import { isWarmupRow, isStraightWorkSet, isSideSet, syncSideAggregate, makeSideSet } from './workout-model.js'
 import { normalizeRepRange } from './rep-range.js'
 
 export const POLICIES = ['off', 'linear', 'greyskull', 'double', 'time']
@@ -106,11 +106,16 @@ export function policyFor(cfg, routine, mode) {
 }
 
 const round1 = v => Math.round(v * 10) / 10
+const roundToStep = (value, step) => {
+  const decimals = Math.min(6, Math.max(1, (String(Number(step)).split('.')[1] || '').length))
+  const factor = 10 ** decimals
+  return Math.round(value * factor + Number.EPSILON) / factor
+}
 // Snap to a loadable multiple of the step. Manual weight controls use this same normalization
 // so fractional increments produce the same number as automatic progression.
 export function snapWeight(v, step) {
   if (!(step > 0)) return round1(v)
-  return round1(Math.round(v / step) * step)
+  return roundToStep(Math.round(v / step) * step, step)
 }
 // A tap moves by one step. Snapping to the grid keeps the number identical to what progression
 // would prescribe (61.3 → 62.5 with a 1.25 step, not 62.55) — but only when the current value
@@ -256,12 +261,17 @@ function loadOf(entry, sets) {
   return loaded.length ? Math.min(...loaded) : 0
 }
 
-export function readSession(entry, fallback) {
+export function readSession(entry, fallback, policy = null) {
   const target = (entry && entry.target) || fallback || {}
   const mode = modeOf({ ...target, id: entry && entry.id })
-  // Warm-up rows are prep, not the session: one filtered read beats guarding every consumer
-  // below (an undone warm-up otherwise poisons `ok` forever and its reps drag `low`/`count`).
-  const logged = ((entry && entry.sets) || []).filter(s => !isWarmupRow(s))
+  // Double progression is earned by normal work sets only. Other policies keep their existing
+  // set interpretation, so adding intensifier rows does not silently change linear or
+  // Greyskull history.
+  const allRows = ((entry && entry.sets) || []).filter(s => !isWarmupRow(s))
+  const effectivePolicy = policy || target.prog || fallback?.prog
+  const logged = mode === 'reps' && effectivePolicy === 'double'
+    ? allRows.filter(isStraightWorkSet)
+    : allRows
   const planned = target.sets || logged.length
   const enough = logged.length >= planned
   // Only the sets the plan asked for decide what happens next (issue #233). A set added on top
@@ -304,15 +314,15 @@ export function readSession(entry, fallback) {
  * continues from where you are. Each session carries the routine it came from (`rid`) and the
  * plan it was built from (`planned`), so the caller can tell a borrowed or outdated baseline.
  */
-export function sessionsFor(S, exId, fallback, rid) {
+export function sessionsFor(S, exId, fallback, rid, policy) {
   if (rid) {
-    const own = sessionsIn(S, exId, fallback, rid)
+    const own = sessionsIn(S, exId, fallback, rid, policy)
     if (own.length) return own
   }
-  return sessionsIn(S, exId, fallback, null)
+  return sessionsIn(S, exId, fallback, null, policy)
 }
 
-function sessionsIn(S, exId, fallback, rid) {
+function sessionsIn(S, exId, fallback, rid, policy) {
   const out = []
   ;(S.workouts || []).forEach(w => {
     const entry = (w.entries || []).find(e => e && e.id === exId && (!rid || entryRoutineId(w, e) === rid))
@@ -325,7 +335,7 @@ function sessionsIn(S, exId, fallback, rid) {
     if (entryExcluded(w, entry)) return
     if (!entry.sets.some(s => s.done && !isWarmupRow(s))) return
     const slot = entryRoutineId(w, entry)
-    out.push({ d: w.d, ...(slot ? { rid: slot } : {}), ...(entry.planned ? { planned: entry.planned } : {}), ...readSession(entry, fallback) })
+    out.push({ d: w.d, ...(slot ? { rid: slot } : {}), ...(entry.planned ? { planned: entry.planned } : {}), ...readSession(entry, fallback, policy) })
   })
   return out
 }
@@ -389,7 +399,7 @@ export function nextPrescription(S, cfg, routine) {
 
   // The routine's own sessions of this exercise, or the exercise's whole history when the
   // routine has none yet (issue #216) — see sessionsFor.
-  const sessions = sessionsFor(S, cfg.id, cfg, routine?.id).filter(s => s.mode === mode)
+  const sessions = sessionsFor(S, cfg.id, cfg, routine?.id, policy).filter(s => s.mode === mode)
   const last = sessions[sessions.length - 1]
   if (!last) return { policy, kind: 'first', why: ['Nothing logged yet — this session sets the baseline.'] }
 

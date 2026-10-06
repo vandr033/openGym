@@ -6,9 +6,9 @@ import { exOr } from '../lib/exercises.js'
 import { activeProfile, exAvailable } from '../lib/equipment.js'
 import { uid, exerciseNameText } from '../lib/format.js'
 import { t, exerciseNameFor, exerciseNameClass } from '../lib/i18n.js'
-import { supersetUnits, moveSupersetUnit, cleanupSg, exLine, defaultConfig } from '../lib/history.js'
+import { supersetUnits, moveSupersetUnit, cleanupSg, exLine, defaultConfig, modeOf, isBw } from '../lib/history.js'
 import { Thumb } from '../components/Media.jsx'
-import { glyphPicker, exercisePicker, exConfigSheet, confirmSheet } from '../sheets.jsx'
+import { glyphPicker, exercisePicker, exConfigSheet, confirmSheet, generateDeloadSheet } from '../sheets.jsx'
 import Icon from '../components/Icon.jsx'
 import { glyphOf } from '../lib/glyphs.js'
 import { Button, Row, SelectRow, Switch } from '../components/ui.jsx'
@@ -17,7 +17,7 @@ import { copyRoutine, deleteRoutine, replaceSlotExercise } from '../lib/routines
 import { planPrintHTML, printPlan } from '../lib/plan-share.js'
 import { MOBILE, printHtml } from '../lib/mobile.js'
 import { speedUnitOf } from '../lib/speed.js'
-import { POLICIES_FOR, POLICY_NAME, POLICY_DESC } from '../lib/progression.js'
+import { POLICIES_FOR, POLICY_NAME, POLICY_DESC, policyFor, weightIncrement } from '../lib/progression.js'
 import BodyMap from '../components/BodyMap.jsx'
 import { loadOfRoutine, rankOf, MUSCLE_NAME } from '../lib/muscles.js'
 
@@ -441,6 +441,14 @@ export default function RoutineEdit() {
       // could neither see nor delete, but that still turned up in the workout.
       const ex = exOr(e.id)
       const noEquip = profile && !exAvailable(S, ex)
+      const mode = modeOf({ ...e, id: e.id })
+      const policy = policyFor({ ...e, id: e.id }, r, mode)
+      const progressionText = mode === 'cardio' ? null : policy === 'off'
+        ? t(POLICY_NAME[policy])
+        : isBw({ ...e, id: e.id }) && mode === 'reps' ? t(POLICY_NAME[policy])
+          : `${t(POLICY_NAME[policy])} · ${t('Step {0}', mode === 'time'
+            ? `${e.inc > 0 ? e.inc : 5}s`
+            : `${weightIncrement({ ...e, id: e.id }, S.unit)} ${S.unit}`)}`
       const linkedPrev = i > 0 && e.sg && r.ex[i - 1].sg === e.sg
       const isDragging = reorder.drag && i >= reorder.drag.first && i <= reorder.drag.last
       return <div key={i} data-routine-row data-ex-index={i}
@@ -458,6 +466,7 @@ export default function RoutineEdit() {
           <span className="routine-grip" data-drag-handle aria-hidden="true" title={t('Reorder exercises')}><Icon name="grip" /></span>
           <Thumb ex={ex} />
           <div className="grow"><div className={`tt ${exerciseNameClass(ex)}`}>{exerciseNameFor(ex)}</div><div className="ss">{exLine(e, S.unit, speedUnitOf(S))}</div>
+            {progressionText && <div className="small dim" style={{ marginTop: 2 }}>{progressionText}</div>}
             {e.note && <div className="small dim" style={{ marginTop: 2 }}>{e.note}</div>}</div>
           {noEquip && <span className="tag" style={{ color: 'var(--orange)', borderColor: 'var(--orange)' }} title={t('Needs {0} — not in your active profile', t(ex.eq))}><Icon name="warning" /></span>}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2, flex: 'none', alignItems: 'center' }}>
@@ -501,6 +510,8 @@ export default function RoutineEdit() {
       update(s => { s.routines.push(copy) })
       nav('/plan/r/' + copy.id)
     }}>{t('Copy routine')}</Button>
+    <div style={{ height: 10 }} />
+    <Button disabled={!r.ex.length} onClick={() => generateDeloadSheet(r.id)}>{t('Generate deload version')}</Button>
     <div style={{ height: 10 }} />
     <Button disabled={!r.ex.length} onClick={printRoutine}>{t('Print / Save as PDF')}</Button>
     <div style={{ height: 10 }} />

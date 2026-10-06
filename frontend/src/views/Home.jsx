@@ -10,6 +10,7 @@ import Icon from '../components/Icon.jsx'
 import { Button } from '../components/ui.jsx'
 import { tappable } from '../lib/use-sheet-keyboard.js'
 import { glyphOf } from '../lib/glyphs.js'
+import { activeProgramContext, daysBetween } from '../lib/programs.js'
 
 // Home = what to do now + a quick glance. Deep charts & history live in Stats.
 export default function Home() {
@@ -24,6 +25,12 @@ export default function Home() {
   const todayRoutines = effectiveRoutines(S, todayISO())
   const routine = todayRoutines[0] || null
   const todayName = todayRoutines.map(r => r.name).join(' + ')
+  const activeProgram = S.programs?.find(program => program.id === S.activeProgramId) || null
+  const programContext = activeProgramContext(S, todayISO())
+  const upcomingProgramPhase = activeProgram?.phases?.find(phase => phase.startsOn > todayISO()) || null
+  const programWeek = programContext
+    ? Math.min(programContext.phase.weeks, Math.floor((daysBetween(programContext.start, todayISO()) || 0) / 7) + 1)
+    : null
   const todayOvr = S.dayPlan[todayISO()] !== undefined
   // An open editor on a saved workout (lib/session-edit.js) holds S.active too, but it is not a
   // session in progress: the row takes you back to it as an edit, the way the tab bar does.
@@ -112,6 +119,33 @@ export default function Home() {
         </Button>
       </div>}
     </div>
+
+    {activeProgram && <div className="card program-home">
+      <div className="row" style={{ gap: 9, minWidth: 0 }}>
+        <span className="lrow-i" style={{ background: 'var(--teal)' }}><Icon name="calendar" /></span>
+        <div style={{ minWidth: 0 }} className="grow">
+          <div className="lbl2">{t('Program')}</div>
+          <div className="ttl">{activeProgram.name}</div>
+          {programContext
+            ? <div className="ss">{programContext.phase.name} · {t('Week {0} of {1}', programWeek, programContext.phase.weeks)}</div>
+            : activeProgram.pausedAt ? <div className="ss">{t('Program paused')}</div>
+              : upcomingProgramPhase ? <div className="ss">{t('Starts {0}', fmtDate(upcomingProgramPhase.startsOn, true))}</div>
+                : <div className="ss">{t('Program complete')}</div>}
+        </div>
+      </div>
+      {programContext && <div className="program-home-current">
+        <span className="small dim">{t('Current')}</span><b>{todayName || t('Rest day')}</b>
+      </div>}
+      {programContext?.phase.deload && <span className="tag" style={{ marginTop: 8 }}>{t('Deload phase')}</span>}
+      {programContext?.program?.phases?.[programContext.index + 1] && <div className="program-home-next">
+        <span className="small dim">{t('Next')}</span>
+        <span>{programContext.program.phases[programContext.index + 1].name} · {fmtDate(programContext.program.phases[programContext.index + 1].startsOn, true)}</span>
+      </div>}
+      {!programContext && upcomingProgramPhase && <div className="program-home-next">
+        <span className="small dim">{t('Next')}</span><span>{upcomingProgramPhase.name} · {fmtDate(upcomingProgramPhase.startsOn, true)}</span>
+      </div>}
+      <Button size="sm" variant="ghost" style={{ marginTop: 8 }} onClick={() => nav('/plan')}>{t('Manage program')}</Button>
+    </div>}
 
     {/* Jump to the gym check-in cards (QR membership codes). Shown here as a quick tap on
         arrival at the gym; folds away per user via the "Gym check-in" switch in Settings. */}

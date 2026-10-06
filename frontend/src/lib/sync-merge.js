@@ -214,7 +214,7 @@ const workoutTime = w => Number(w?._ts) || Number(w?.end) || Number(w?.start) ||
 // What a reset records of the entries it wiped (resetIds), by field: how an entry is named.
 const bodyweightKey = e => `${e?.d}|${e?.t ?? ''}`
 const RESET_LISTS = {
-  workouts: workoutKey, routines: x => x?.id, customEx: x => x?.id, bodyweight: bodyweightKey,
+  workouts: workoutKey, routines: x => x?.id, programs: x => x?.id, customEx: x => x?.id, bodyweight: bodyweightKey,
   gymCards: x => x?.id, equipProfiles: x => x?.id, favEx: x => x,
 }
 const RESET_MAPS = ['exNotes', 'barWeights', 'balanceOverrides', 'loadKind', 'plates']
@@ -268,6 +268,7 @@ export function sinceReset(S, at, ids) {
     const after = v => (Number(v) || 0) > at
     out.workouts = list(S.workouts).filter(w => w && after(workoutTime(w)))
     out.routines = list(S.routines).filter(r => r && after(r._ts))
+    out.programs = list(S.programs).filter(p => p && after(p._ts))
     out.customEx = list(S.customEx).filter(c => c && after(c._ts))
     out.bodyweight = list(S.bodyweight).filter(e => e && after(e.t))
     // No time of their own: taken for what they were before the reset, which cleared them.
@@ -360,7 +361,7 @@ export function mergeStates(a0, b0, { prefer } = {}) {
     }
   }
   out.workouts.sort(byDayStart)
-  for (const f of ['routines', 'customEx', 'equipProfiles', 'gymCards']) {
+  for (const f of ['routines', 'programs', 'customEx', 'equipProfiles', 'gymCards']) {
     if (list(n[f]).length || list(o[f]).length) out[f] = unionById(n[f], o[f]).map(clone)
   }
   // A routine edited on both sides keeps the version edited last. Taking the newer copy's
@@ -372,6 +373,13 @@ export function mergeStates(a0, b0, { prefer } = {}) {
     out.routines = out.routines.map(r => {
       const alt = r?.id != null && other.get(r.id)
       return alt && (alt._ts || 0) > (r._ts || 0) ? clone(alt) : r
+    })
+  }
+  if (!prefer && out.programs) {
+    const other = new Map(list(o.programs).filter(p => p?.id != null).map(p => [p.id, p]))
+    out.programs = out.programs.map(p => {
+      const alt = p?.id != null && other.get(p.id)
+      return alt && (alt._ts || 0) > (p._ts || 0) ? clone(alt) : p
     })
   }
   // A custom exercise edited on both sides keeps the version edited last, the same rule and for
@@ -441,6 +449,17 @@ export function stampRoutines(prev = [], next = [], now = Date.now()) {
     if (!r || r.id == null) continue
     const old = before.get(r.id)
     if (!old || (old !== r && !sameRoutine(old, r))) r._ts = now
+  }
+  return next
+}
+
+const sameProgram = (a, b) => JSON.stringify({ ...a, _ts: 0 }) === JSON.stringify({ ...b, _ts: 0 })
+export function stampPrograms(prev = [], next = [], now = Date.now()) {
+  const before = new Map(list(prev).filter(p => p?.id != null).map(p => [p.id, p]))
+  for (const p of list(next)) {
+    if (!p || p.id == null) continue
+    const old = before.get(p.id)
+    if (!old || (old !== p && !sameProgram(old, p))) p._ts = now
   }
   return next
 }

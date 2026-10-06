@@ -69,6 +69,8 @@ export function buildCompletedWorkout(active, { end = Date.now(), prs = [], snap
 
   const sessionNote = (active?.note || '').trim()
   const routineIds = [].concat(active?.routineIds ?? (active?.routineId ? [active.routineId] : []))
+  const program = active?.program && typeof active.program === 'object' ? { ...active.program } : null
+  const readiness = active?.readiness && typeof active.readiness === 'object' ? { ...active.readiness } : null
   // Legacy `w.excludeFromProgression` mirror: kept for older builds and external readers, but
   // it only makes sense when the *whole* session is excluded. Derived from the completed
   // entries, not read from `active` (which no longer carries the flag). A mixed session omits
@@ -86,6 +88,9 @@ export function buildCompletedWorkout(active, { end = Date.now(), prs = [], snap
     bw: active.bw,
     entries,
     prs,
+    ...(program ? { program } : {}),
+    ...(active?.deload === true ? { deload: true } : {}),
+    ...(readiness ? { readiness } : {}),
     ...(allNoProg ? { excludeFromProgression: true } : {}),
     ...(sessionNote ? { note: sessionNote } : {}),
   }

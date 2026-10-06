@@ -100,7 +100,7 @@ describe('the demo Coach failing inside its timer', () => {
 
     await click(chip(/Last workout/))
     expect(mocks.toast).not.toHaveBeenCalled()                       // the request was accepted
-    expect(mocks.S.coach.chat.at(-1)).toMatchObject({ role: 'user', kind: 'text', text: 'How did my Push Day session go?' })
+    await vi.waitFor(() => expect(mocks.S.coach.chat.at(-1)).toMatchObject({ role: 'user', kind: 'text', text: 'How did my Push Day session go?' }))
     const lines = mocks.S.coach.chat.length
 
     await elapse(DELAY)                                              // the builder throws in here
@@ -114,7 +114,7 @@ describe('the demo Coach failing inside its timer', () => {
     // Not bricked: a second ask goes through instead of "already thinking".
     await click(chip(/Last workout/))
     expect(mocks.toast).not.toHaveBeenCalled()
-    expect(mocks.S.coach.chat.at(-1)).toMatchObject({ role: 'user', kind: 'text' })
+    await vi.waitFor(() => expect(mocks.S.coach.chat.at(-1)).toMatchObject({ role: 'user', kind: 'text' }))
     await elapse(DELAY); await elapse(POLL_MS)                       // drain it, so nothing is left running
   })
 })

@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => {
     effortPickerSheet: vi.fn(),
     exerciseHistorySheet: vi.fn(),
     renameWorkoutSheet: vi.fn(),
+    openSheet: vi.fn(),
   }
   state.stopRest = vi.fn(() => { state.timer = null })
   state.stopWork = vi.fn(() => { state.work = null })
@@ -51,6 +52,7 @@ const mocks = vi.hoisted(() => {
     shiftRestOwner: vi.fn(),
     startWork: state.startWork,
     toast: state.toast,
+    openSheet: state.openSheet,
   })
   return state
 })
@@ -82,6 +84,8 @@ vi.mock('../sheets.jsx', () => ({
   // Both note sheets belong here even though the tests never open one: Workout.jsx reads
   // sessionNoteSheet during render, so a missing export is a render crash, not a no-op.
   exerciseNoteSheet: vi.fn(),
+  setNoteSheet: vi.fn(),
+  setDiscomfortSheet: vi.fn(),
   sessionNoteSheet: vi.fn(),
   renameWorkoutSheet: mocks.renameWorkoutSheet,
   effortPickerSheet: mocks.effortPickerSheet,
@@ -636,7 +640,7 @@ describe('active workout weight controls', () => {
     await mount([exercise('plain-bench', [false], { target, sets: [{ w: 60, r: 5, done: false }] })])
     await press('Increase', '.setrow .stp.w')
 
-    expect(automatic.weight).toBe(61.3)
+    expect(automatic.weight).toBe(61.25)
     expect(mocks.S.active.entries[0].sets[0].w).toBe(automatic.weight)
   })
 
@@ -821,6 +825,19 @@ describe('progression guidance', () => {
 
     expect(container.querySelector('.progline')?.textContent)
       .toContain('Linear progression · Every rep last time — 2.5 kg more.')
+  })
+
+  it('opens the target explanation separately from progression settings', async () => {
+    await mount([exercise('plain-bench', [false], {
+      plan: { policy: 'linear', kind: 'up', weight: 62.5, why: ['Every rep last time — {0} {1} more.', 2.5, 'kg'] },
+    })], 0, {
+      workouts: [{ d: '2026-08-30', entries: [{ id: 'plain-bench', target: { reps: 5 }, sets: [{ w: 60, r: 5, done: true }] }] }],
+    })
+
+    const why = container.querySelector('button[aria-label="Why this target?"]')
+    expect(why).toBeTruthy()
+    await act(async () => { why.dispatchEvent(new dom.Event('click', { bubbles: true })) })
+    expect(mocks.openSheet).toHaveBeenCalledOnce()
   })
 
   it('is a keyboard-accessible button that opens settings for the pressed grouped entry', async () => {
@@ -1749,7 +1766,9 @@ describe('workout controls: the more menu and the set menu', () => {
   it('opens a per-set menu from the set number with drop, burst and remove', async () => {
     await mount([exercise('plain-bench', [false, false])])
     await act(async () => { container.querySelector('button[aria-label="Set 2"]').dispatchEvent(new dom.Event('click', { bubbles: true })) })
-    expect(lastMenu().items.filter(Boolean).map(it => it.label)).toEqual(['Drop set', 'Rest-pause burst', 'Remove this set'])
+    expect(lastMenu().items.filter(Boolean).map(it => it.label)).toEqual([
+      'Add set note', 'Log discomfort', 'Drop set', 'Rest-pause burst', 'Remove this set',
+    ])
 
     await act(async () => { item('Drop set').onClick() })
     expect(mocks.S.active.entries[0].sets[1].drops?.length).toBe(1)

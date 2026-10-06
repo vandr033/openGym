@@ -52,6 +52,7 @@ vi.mock('../lib/mobile.js', () => ({
 }))
 vi.mock('./MobileOnboarding.jsx', () => ({ ConnectSheet: props => <div className="connect" data-url={props.initialUrl ?? ''} data-again={String(!!props.again)} /> }))
 vi.mock('../sheets.jsx', () => ({
+  trainingExportSheet: vi.fn(),
   starterPlanSheet: vi.fn(), confirmSheet: (...a) => mocks.confirmSheet(...a), importFromApp: vi.fn(),
   importFromHevy: vi.fn(), equipmentProfileSheet: vi.fn(), menuSheet: vi.fn(), askAddDeviceData: vi.fn(),
 }))
