@@ -157,7 +157,7 @@ function normalizeExercise(source, unit, exercises) {
 
 export function parseRoutineImport(input, { unit = 'kg', state = {} } = {}) {
   let data
-  try { data = typeof input === 'string' ? JSON.parse(input) : input } catch { throw new Error('This is not valid JSON.') }
+  try { data = typeof input === 'string' ? JSON.parse(input) : input } catch (error) { throw new Error('Invalid JSON: ' + error.message) }
   if (!data || typeof data !== 'object' || Array.isArray(data) || data.format !== ROUTINE_FORMAT) {
     throw new Error('Expected a JSON object with format "' + ROUTINE_FORMAT + '".')
   }

@@ -1479,6 +1479,8 @@ paths:
             `workouts`/`routines` set to anything other than an array or null. Entries inside
             those two arrays that are not objects (`null`, numbers, nested arrays) are dropped
             before the write rather than refused, so a client with a damaged copy still syncs.
+            An Apple Health workout link with missing or unknown fields, or a UUID used by
+            two workouts, is refused.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -1504,6 +1506,48 @@ paths:
                 type: object
                 properties:
                   rev: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/health-data:
+    get:
+      tags: [data]
+      operationId: getHealthData
+      summary: Read the caller's normalized Apple Health copy
+      description: Returns only the signed-in profile's daily summaries and completed workouts.
+      responses:
+        '200':
+          description: Stored summaries, or empty arrays before the first upload.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthData' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    put:
+      tags: [data]
+      operationId: putHealthData
+      summary: Upsert normalized Apple Health summaries
+      description: |
+        Uses the paired phone's existing bearer token or the browser session. Daily rows
+        are keyed by date and source; workouts by HealthKit UUID. Partial daily updates
+        retain fields not returned by HealthKit. The server sets `importedAt` and rejects
+        unknown fields, including raw heart-rate samples. This does not change profile
+        state or its revision.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HealthData' }
+      responses:
+        '200':
+          description: Saved.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  daily: { type: integer, description: Total stored daily rows. }
+                  workouts: { type: integer, description: Total stored workout rows. }
+        '400': { description: Invalid health data., content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
   /api/media/{hash}:
@@ -3149,6 +3193,57 @@ components:
           additionalProperties: true
       additionalProperties: true
 
+    # ------------------------------------------------------------------ health data
+    HealthData:
+      type: object
+      required: [daily, workouts]
+      properties:
+        daily:
+          type: array
+          maxItems: 40
+          items:
+            type: object
+            required: [date, source]
+            properties:
+              date: { type: string, format: date }
+              source: { type: string, const: apple-health }
+              importedAt: { type: string, format: date-time, readOnly: true }
+              steps: { type: number }
+              activeEnergyKcal: { type: number }
+              exerciseMinutes: { type: number }
+              bodyWeightKg: { type: number }
+              restingHeartRateBpm: { type: number }
+              hrvSdnnMs: { type: number }
+              heartRateBpm: { type: number }
+              sleep:
+                type: object
+                properties:
+                  totalMinutes: { type: number }
+                  inBedMinutes: { type: number }
+                  awakeMinutes: { type: number }
+                  coreMinutes: { type: number }
+                  deepMinutes: { type: number }
+                  remMinutes: { type: number }
+                  startAt: { type: string, format: date-time, description: Start of the sleep window. }
+                  endAt: { type: string, format: date-time, description: End of the sleep window. }
+        workouts:
+          type: array
+          maxItems: 500
+          items:
+            type: object
+            required: [externalId, source, workoutType, startAt, endAt, durationSeconds]
+            properties:
+              externalId: { type: string, description: HealthKit workout UUID. }
+              source: { type: string, const: apple-health }
+              workoutType: { type: string }
+              startAt: { type: string, format: date-time }
+              endAt: { type: string, format: date-time }
+              durationSeconds: { type: number }
+              activeEnergyKcal: { type: number }
+              averageHeartRateBpm: { type: number }
+              maxHeartRateBpm: { type: number }
+              importedAt: { type: string, format: date-time, readOnly: true }
+
     # ------------------------------------------------------------------ state sync
     State:
       type: object
@@ -3327,6 +3422,18 @@ components:
           type: array
           items: { type: string }
           description: Exercise ids that hit a personal record.
+        appleHealth:
+          type: object
+          description: Manually linked HealthKit workout summary; no raw samples.
+          properties:
+            externalId: { type: string, description: HealthKit workout UUID. }
+            workoutType: { type: string }
+            startAt: { type: string, format: date-time }
+            endAt: { type: string, format: date-time }
+            durationSeconds: { type: number }
+            activeEnergyKcal: { type: number }
+            averageHeartRateBpm: { type: number }
+            maxHeartRateBpm: { type: number }
         entries:
           type: array
           items:

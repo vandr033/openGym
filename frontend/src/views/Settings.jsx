@@ -333,6 +333,12 @@ export default function Settings() {
         onClick={() => nav('/coach/setup')} />
     </Section>}
 
+    {MOBILE && <Section title={t('Apple Health')}>
+      <Row icon="heart" iconTint="var(--red)" title={t('Apple Health')}
+        subtitle={t('Read sleep, activity, heart metrics, weight and workouts on this iPhone.')}
+        accessory="chevron" onClick={() => nav('/health')} />
+    </Section>}
+
     {/* ---------- general ---------- */}
     <Section title={t('General')} footer={t('Switching the unit offers to convert every stored weight.')}>
       <SelectRow

@@ -54,6 +54,16 @@ describe('mergeStates', () => {
     gymCards: [{ id: 'g2', value: '2' }], _rev: 8
   })
 
+  it('keeps a HealthKit UUID linked to only the later edited workout after a conflict', () => {
+    const older = workout('old'), newer = workout('new')
+    older._ts = 10; newer._ts = 20
+    older.appleHealth = { externalId: 'HK-1' }; newer.appleHealth = { externalId: 'HK-1' }
+    for (const merged of [mergeStates(base({ workouts: [older] }), base({ workouts: [newer] })), mergeStates(base({ workouts: [newer] }), base({ workouts: [older] }))]) {
+      expect(merged.workouts.find(w => w.id === 'new').appleHealth.externalId).toBe('HK-1')
+      expect(merged.workouts.find(w => w.id === 'old').appleHealth).toBeUndefined()
+    }
+  })
+
   it('no entity of either side disappears, ids stay unique', () => {
     const m = mergeStates(A(), B())
     expect(ids(m.workouts).sort()).toEqual(['w1', 'wA', 'wB'])

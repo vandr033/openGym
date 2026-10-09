@@ -353,6 +353,17 @@ export const useStore = create((set, get) => {
       if (fpOf !== S) { localStorage.setItem(SYNCED_FP_KEY, JSON.stringify(syncFingerprint(S))); fpOf = S }
     } catch { /* storage refused — only the count is lost */ }
     reached({ pending: false, lastSynced: at })
+    if (get().ready) syncHealth()
+  }
+  // Health sync shares this pairing and only follows a successful profile sync. Its own
+  // device-local cursor is advanced by the health service after the server acknowledges it.
+  const syncHealth = (force = false) => {
+    const uid = get().user?.id, server = pairedBase
+    if (!MOBILE || !uid || !server) return
+    const target = { uid, server }
+    import('../lib/health/healthService.js').then(({ syncHealthToServer }) =>
+      syncHealthToServer(target, { force, isCurrent: () => get().user?.id === uid && pairedBase === server })
+    ).catch(() => {})
   }
   const readFingerprint = () => { try { return JSON.parse(localStorage.getItem(SYNCED_FP_KEY)) } catch { return null } }
 
@@ -439,6 +450,7 @@ export const useStore = create((set, get) => {
   // Boot's last step: from here on changes push, and one made during boot goes now.
   const finishBoot = (extra = {}) => {
     set({ ready: true, ...extra })
+    if (pairedBase && get().user && !get().sync.lastError) syncHealth(true)
     if (pushPending && get().user) {
       clearTimeout(pushTm)
       pushTm = setTimeout(() => get().pushState(), 1500)

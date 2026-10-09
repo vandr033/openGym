@@ -23,6 +23,7 @@ import {
 import { Button, Segmented, SelectRow } from '../components/ui.jsx'
 import { tappable } from '../lib/use-sheet-keyboard.js'
 import { isWarmupRow } from '../lib/workout-model.js'
+import { trainingLoad } from '../lib/health/recoveryContext.js'
 
 // Which muscles the training in a window actually hit — and, the point of the card,
 // which ones it keeps missing. Shading is relative within the window (lib/muscles.js).
@@ -303,6 +304,8 @@ export default function Stats() {
   const bwDelta30 = bw30.length > 1 ? bw30[bw30.length - 1].w - bw30[0].w : null
   const workouts = S.workouts
   const monthW = workouts.filter(w => workoutDay(w)?.slice(0, 7) === todayISO().slice(0, 7)).length
+  const loadWeeks = trainingLoad(workouts, todayISO(), weekStartOf(S))
+  const loadNow = loadWeeks.at(-1)
 
   const metricDataOf = (workout, id) => {
     const entries = metricEntriesForExercise(workout, id)
@@ -471,6 +474,30 @@ export default function Stats() {
       />
     </div>
 
+    {workouts.length > 0 && <div className="card">
+      <h2>Training load · This week</h2>
+      <div className="recovery-grid">
+        <div><span className="small dim">Working sets</span><strong>{loadNow.workingSets}</strong></div>
+        <div><span className="small dim">Hard sets</span><strong>{loadNow.hardSets} <small className="dim">/ {loadNow.ratedSets} rated</small></strong></div>
+        <div><span className="small dim">Volume load</span><strong>{fmtNum(loadNow.volumeLoad)} {S.unit}</strong></div>
+      </div>
+      <div className="small dim" style={{ margin: '12px 0 4px' }}>Four-week working sets</div>
+      <div className="chart"><LineChart points={loadWeeks.map(week => ({ t: new Date(`${week.start}T12:00:00`).getTime(), d: week.start, y: week.workingSets }))} h={120} unit="sets" /></div>
+      <div className="small dim" style={{ margin: '12px 0 4px' }}>Muscle-group set volume · weighted for primary and supporting muscles</div>
+      {Object.entries(loadNow.muscles).sort((a, b) => b[1] - a[1]).map(([muscle, sets]) => <div className="recovery-event" key={muscle}>
+        <span className="grow">{t(MUSCLE_NAME[muscle] || muscle)}</span><strong>{fmtNum(sets)}</strong>
+      </div>)}
+      <div className="small dim" style={{ marginTop: 10 }}>Volume load is logged weight × reps for loaded sets. It is separate from heart rate and active energy.</div>
+      {workouts.some(workout => workout.appleHealth) && <>
+        <div className="small dim" style={{ margin: '16px 0 4px' }}>Linked Apple Health sessions · cardiovascular context</div>
+        {workouts.filter(workout => workout.appleHealth).slice(-3).reverse().map(workout => <div className="recovery-event" key={workout.id || workout.start}>
+          <span className="grow"><strong>{workout.name || t('Workout')}</strong><span className="small dim" style={{ display: 'block' }}>{fmtDate(workout.d, true)}</span></span>
+          <span className="small dim" style={{ textAlign: 'end' }}>{Math.round(workout.appleHealth.durationSeconds / 60)} min
+            {workout.appleHealth.averageHeartRateBpm != null ? ` · ${workout.appleHealth.averageHeartRateBpm} bpm avg` : ''}
+            {workout.appleHealth.activeEnergyKcal != null ? ` · ${workout.appleHealth.activeEnergyKcal} kcal` : ''}</span>
+        </div>)}
+      </>}
+    </div>}
     {workouts.length > 0 && <MuscleBalance S={S} />}
     {workouts.length > 0 && <div className="card row between" style={{ alignItems: 'center', gap: 12 }}>
       <div style={{ minWidth: 0 }}><h2 style={{ margin: 0 }}>{t('Structural balance')}</h2>

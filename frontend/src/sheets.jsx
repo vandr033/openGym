@@ -48,6 +48,8 @@ import { workoutsOn, backfillStart, backfillEnd, completeBackfill, historyAsOf, 
 import { moveWorkout, sameWorkout, startTimeOf, durationMinOf, setWorkoutDuration, rebuildPrHistory } from './lib/workout-date.js'
 import { editCompletedSession, editLeftEmpty, editedRecord, editChangesNothing } from './lib/session-edit.js'
 import { stampWorkout } from './lib/sync-merge.js'
+import { candidateHealthWorkouts, linkHealthWorkout, unlinkHealthWorkout } from './lib/health/workoutLink.js'
+import { readHealthView } from './lib/health/healthService.js'
 import { weeklyWeights } from './lib/bodyweight.js'
 import { workoutText } from './lib/workout-text.js'
 import { copyText } from './lib/clipboard.js'
@@ -1368,6 +1370,7 @@ function ProgressionFields({ ex, mode, c, setC, routine, unit, perSide }) {
         options={[{ value: '', label: t('Follow the routine ({0})', t(POLICY_NAME[inherited])) },
           ...options.map(p => ({ value: p, label: t(POLICY_NAME[p]) }))]} />
     </div>
+    {mode === 'reps' && active !== 'double' && <Button size="sm" variant="ghost" onClick={() => setRule('double')}>{t('Set a rep range')}</Button>}
     <div className="small dim" style={{ marginBottom: active === 'off' ? 18 : 10 }}>{t(POLICY_DESC[active])}</div>
     {/* Double progression on a weighted exercise fills this row with four steppers; `cfgrow-4`
         lets it wrap into two pairs on phones, where four abreast left the inputs a few px wide. */}
@@ -1531,6 +1534,7 @@ function ExConfig({ ex, existing, onSave, onDelete, onReplace, close, routine, i
         {!bw && <Stepper label={t('Weight ({0})', st.unit)} value={c.weight} step={2.5} onChange={v => setC(x => ({ ...x, weight: v }))} />}
       </>}
     </div>
+    <ProgressionFields ex={ex} mode={mode} c={c} setC={setC} routine={routine} unit={st.unit} perSide={perSide} />
     {c.intensifier?.type === 'restpause' && <div className="small dim" style={{ marginTop: -10, marginBottom: 18 }}>
       {t('Rest-pause always trains as one warm-up set at this rep count, then one rest-pause work set — "Sets" is not used.')}
     </div>}
@@ -1644,7 +1648,6 @@ function ExConfig({ ex, existing, onSave, onDelete, onReplace, close, routine, i
       <h4 className="sec">{t('Plate loading')}</h4>
       <BarWeightEditor ex={ex} cfg={c} extra={t('Applies to this exercise everywhere, not just this plan.')} />
     </>}
-    <ProgressionFields ex={ex} mode={mode} c={c} setC={setC} routine={routine} unit={st.unit} perSide={perSide} />
     <textarea className="input" rows={3} maxLength={500} style={{ marginBottom: 18 }}
       placeholder={t('Note (optional) — loading cues, "bar only then +1 plate/side each set", anything worth remembering here')}
       value={c.note || ''} onChange={e => setC(x => ({ ...x, note: e.target.value }))} />
@@ -1770,6 +1773,14 @@ export const generateDeloadSheet = routineId => ui().openSheet(close => <Generat
 
 function TrainingExport({ close }) {
   const st = useStore(s => s.S)
+  const [health, setHealth] = useState(null)
+  const [healthStatus, setHealthStatus] = useState('loading')
+  useEffect(() => {
+    let live = true
+    readHealthView().then(data => { if (live) { setHealth(data); setHealthStatus('ready') } })
+      .catch(() => { if (live) setHealthStatus('unavailable') })
+    return () => { live = false }
+  }, [])
   const [preset, setPreset] = useState('6w')
   const [range, setRange] = useState(() => trainingPeriod('6w', todayISO()))
   const presets = [
@@ -1781,7 +1792,7 @@ function TrainingExport({ close }) {
     if (value !== 'custom') setRange(trainingPeriod(value, todayISO()))
   }
   const valid = !!range.from && !!range.to && range.from <= range.to
-  const data = useMemo(() => buildTrainingExport(st, range), [st, range])
+  const data = useMemo(() => buildTrainingExport(st, range, health), [st, range, health])
   const json = JSON.stringify(data)
   const aiText = TRAINING_AI_PROMPT + '\n' + JSON.stringify(data, null, 2)
   const csv = trainingExportCSV(data)
@@ -1797,7 +1808,7 @@ function TrainingExport({ close }) {
   const copy = async (value, success) => toast(await copyText(value) ? t(success) : t('Could not copy'))
   return <>
     <h3>{t('Export Training Data for AI')}</h3>
-    <div className="muted small" style={{ marginBottom: 12 }}>{t('A focused training summary. It does not include profile settings or other backup data.')}</div>
+    <div className="muted small" style={{ marginBottom: 12 }}>{t('A focused training summary. It does not include profile settings or other backup data.')} Connected Apple Health summaries are included in JSON and the AI prompt when available.</div>
     <label className="small dim" htmlFor="training-export-preset">{t('Date range')}</label>
     <select id="training-export-preset" className="input" value={preset} onChange={e => setPresetValue(e.target.value)}>
       {presets.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -1809,11 +1820,13 @@ function TrainingExport({ close }) {
     {!valid && <div className="small" role="alert" style={{ color: 'var(--red)', marginTop: 8 }}>{t('The start date must be on or before the end date.')}</div>}
     <div className="small dim" style={{ margin: '8px 2px 12px' }}>
       {t('{0} workouts and {1} bodyweight entries', data.workouts.length, data.bodyWeight.length)}
+      {data.dailyHealth?.length ? ` · ${data.dailyHealth.length} health days` : ''}
+      {healthStatus === 'loading' ? ' · Checking health data…' : healthStatus === 'unavailable' ? ' · Health data unavailable; training only' : ''}
     </div>
-    <Button variant="primary" icon="download" disabled={!valid} onClick={downloadJson}>{t('Download JSON')}</Button>
-    <Button variant="ghost" icon="clipboard" disabled={!valid} onClick={() => copy(json, 'Copied')}>{t('Copy JSON')}</Button>
-    <Button variant="tinted" icon="sparkles" disabled={!valid} onClick={() => copy(aiText, 'Prompt and data copied')}>{t('Copy AI Prompt + Data')}</Button>
-    <Button variant="ghost" icon="download" disabled={!valid} onClick={downloadCsv}>{t('Download CSV')}</Button>
+    <Button variant="primary" icon="download" disabled={!valid || healthStatus === 'loading'} onClick={downloadJson}>{t('Download JSON')}</Button>
+    <Button variant="ghost" icon="clipboard" disabled={!valid || healthStatus === 'loading'} onClick={() => copy(json, 'Copied')}>{t('Copy JSON')}</Button>
+    <Button variant="tinted" icon="sparkles" disabled={!valid || healthStatus === 'loading'} onClick={() => copy(aiText, 'Prompt and data copied')}>{t('Copy AI Prompt + Data')}</Button>
+    <Button variant="ghost" icon="download" disabled={!valid || healthStatus === 'loading'} onClick={downloadCsv}>{t('Download CSV')}</Button>
     <div style={{ height: 8 }} />
     <Button variant="ghost" onClick={close}>{t('Close')}</Button>
   </>
@@ -2367,7 +2380,26 @@ function WorkoutDetail({ w, close }) {
   const noteRef = useRef(null)
   const onNoteFocus = useSheetKeyboard(noteRef)
   const st = useStore(s => s.S)
+  const user = useStore(s => s.user)
   const update = useStore(s => s.update)
+  const linked = (st.workouts.find(x => sameWorkout(x, w)) || w).appleHealth
+  const chooseHealthWorkout = async () => {
+    let workouts
+    try {
+      workouts = MOBILE
+        ? (await (await import('./lib/health/healthService.js')).readHealthCache()).workouts || []
+        : (await (await import('./lib/api.js')).api('/api/health-data')).workouts || []
+    } catch (e) { toast(t('Could not load Apple Health workouts')); return }
+    const choices = candidateHealthWorkouts(w, workouts, S().workouts)
+    if (!choices.length) { toast(t('No possible Apple Health matches found')); return }
+    menuSheet({ title: t('Link Apple Health Workout'), subtitle: t('Choose the completed workout that matches this session.'),
+      items: choices.map(h => ({ icon: 'heart', label: h.workoutType.replace(/([a-z])([A-Z])/g, '$1 $2'),
+        sub: `${new Date(h.startAt).toLocaleString()} · ${fmtDur(h.durationSeconds * 1000)}`,
+        onClick: () => {
+          try { update(s => { linkHealthWorkout(s, w, h) }); toast(t('Apple Health workout linked')) }
+          catch (e) { toast(t(e.message)) }
+        } })) })
+  }
   // The session note is editable here rather than only at the finish sheet: what you want to
   // record about a session is often clearer once you have looked at what you actually did.
   const [note, setNote] = useState(w.note || '')
@@ -2463,6 +2495,16 @@ function WorkoutDetail({ w, close }) {
     }) : entryRows(groups[0]?.units || [])}
     {/* Progress photos and form-check videos: added and removed right here, on the saved record. */}
     <WorkoutMediaSection w={w} />
+    {(linked || MOBILE || user) && <div style={{ margin: '16px 0' }}>
+      <div className="small muted" style={{ marginBottom: 6 }}>{t('Apple Health')}</div>
+      {linked ? <>
+        <Row title={t('Duration')} value={fmtDur(linked.durationSeconds * 1000)} />
+        {linked.averageHeartRateBpm != null && <Row title={t('Avg HR')} value={`${linked.averageHeartRateBpm} bpm`} />}
+        {linked.maxHeartRateBpm != null && <Row title={t('Max HR')} value={`${linked.maxHeartRateBpm} bpm`} />}
+        {linked.activeEnergyKcal != null && <Row title={t('Active energy')} value={`${linked.activeEnergyKcal} kcal`} />}
+        <Button onClick={() => update(s => { unlinkHealthWorkout(s, w) })}>{t('Unlink Apple Health Workout')}</Button>
+      </> : <Button icon="link" onClick={chooseHealthWorkout}>{t('Link Apple Health Workout')}</Button>}
+    </div>}
     <div className="small muted" style={{ margin: '4px 0 6px' }}>{t('Session note')}</div>
     <textarea ref={noteRef} className="input" rows={2} maxLength={NOTE_MAX} value={note}
       placeholder={t('How the session went as a whole.')}

@@ -360,6 +360,15 @@ export function mergeStates(a0, b0, { prefer } = {}) {
       if (x && y) { mergeWorkoutMedia(w, x); mergeWorkoutMedia(w, y) }
     }
   }
+  // Two devices can choose the same HealthKit UUID before either sees the other's link.
+  // Keep the later link and stamp the removal so a later merge does not bring it back.
+  const linked = new Set()
+  for (const w of [...out.workouts].sort((x, y) => (y._ts || 0) - (x._ts || 0))) {
+    const id = w.appleHealth?.externalId
+    if (!id) continue
+    if (linked.has(id)) { delete w.appleHealth; stampWorkout(w, Math.max(Date.now(), (w._ts || 0) + 1)) }
+    else linked.add(id)
+  }
   out.workouts.sort(byDayStart)
   for (const f of ['routines', 'programs', 'customEx', 'equipProfiles', 'gymCards']) {
     if (list(n[f]).length || list(o[f]).length) out[f] = unionById(n[f], o[f]).map(clone)

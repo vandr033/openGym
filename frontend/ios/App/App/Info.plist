@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-        <string>openGym</string>
+	<string>openGym</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -22,8 +22,12 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
-	<key>UILaunchStoryboardName</key>
-	<string>LaunchScreen</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Used to scan your gym membership QR code, and to take a photo or video of an exercise you add yourself.</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>openGym reads your sleep, activity, heart metrics, body weight, and workouts to show them on this device.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Used to record the sound of a video you take of an exercise you add yourself.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -43,6 +47,8 @@
 			</array>
 		</dict>
 	</dict>
+	<key>UILaunchStoryboardName</key>
+	<string>LaunchScreen</string>
 	<key>UIRequiredDeviceCapabilities</key>
 	<array>
 		<string>armv7</string>
@@ -62,9 +68,5 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
-	<key>NSCameraUsageDescription</key>
-	<string>Used to scan your gym membership QR code, and to take a photo or video of an exercise you add yourself.</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Used to record the sound of a video you take of an exercise you add yourself.</string>
 </dict>
 </plist>

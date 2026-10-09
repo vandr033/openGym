@@ -13,6 +13,7 @@ import {
   generateAuthenticationOptions, verifyAuthenticationResponse
 } from '@simplewebauthn/server';
 import webpush from 'web-push';
+import { createHealthDataStore, validHealthLink } from './health-data.js';
 import * as coachConfig from './coach/config.js';
 import * as coachJobs from './coach/jobs.js';
 import { coachRoutes } from './coach/routes.js';
@@ -110,6 +111,7 @@ function atomicWrite(file, content, mode) {
   fs.renameSync(tmp, file);
 }
 const stateFile = uid => path.join(DATA, 'state-' + uid.replace(/[^a-zA-Z0-9_-]/g, '') + '.json');
+const HEALTH = createHealthDataStore(DATA);
 // When a profile last fetched its document (GET /api/data). The document's own `_ts` moves only
 // on a push, so a device that only ever read — a second phone, a profile that trains elsewhere
 // and just looks — showed "last sync never" in the admin dashboard (QA 1.3.9). Kept on the user
@@ -2002,6 +2004,19 @@ const routes = {
     json(res, 200, { rev: readStateCached(user.id)?._rev || 0 });
   },
 
+  'GET /api/health-data': async (req, res) => {
+    const user = readSession(req);
+    if (!user) return json(res, 401, { error: 'not signed in' });
+    json(res, 200, HEALTH.read(user.id));
+  },
+  'PUT /api/health-data': async (req, res) => {
+    const user = readSession(req);
+    if (!user) return json(res, 401, { error: 'not signed in' });
+    const saved = HEALTH.upsert(user.id, await readBody(req));
+    if (!saved) return json(res, 400, { error: 'invalid health data' });
+    json(res, 200, { ok: true, daily: saved.daily.length, workouts: saved.workouts.length });
+  },
+
   'PUT /api/data': async (req, res) => {
     const user = readSession(req);
     if (!user) return json(res, 401, { error: 'not signed in' });
@@ -2030,6 +2045,13 @@ const routes = {
     // such an entry carries nothing worth keeping, whereas a 400 would strand a client whose own
     // copy is already malformed — it keeps re-sending the same document and never syncs again.
     for (const k of ['workouts', 'routines']) if (Array.isArray(body.state[k])) body.state[k] = records(body.state[k]);
+    const linked = new Set();
+    for (const w of records(body.state.workouts)) {
+      if (w.appleHealth == null) continue;
+      const id = w.appleHealth?.externalId;
+      if (!validHealthLink(w.appleHealth) || linked.has(id)) return json(res, 400, { error: 'invalid Apple Health workout link' });
+      linked.add(id);
+    }
     // Conditional write: a `baseRev` that is not the current revision means this client last
     // read an older document — another device has written since — and the copy it is about to
     // push would silently drop that write. The current document travels back with the 409, so
@@ -2214,7 +2236,7 @@ const routes = {
       bodyweight: records(S.bodyweight),
       // records() already copied, so this reverse is ours: newest first for display. A workout's
       // photos and videos are the owner's own: the admin view gets no refs to them.
-      workouts: records(S.workouts).reverse().map(({ media, ...w }) => w)
+      workouts: records(S.workouts).reverse().map(({ media, appleHealth, ...w }) => w)
     });
   },
 
@@ -2254,6 +2276,7 @@ const routes = {
     presence.delete(u.id);
     // The training history and any Coach credential of theirs, both outside db.json.
     try { fs.unlinkSync(stateFile(u.id)); } catch { /* already gone */ }
+    try { HEALTH.remove(u.id); } catch (e) { console.error('health: could not remove data of', u.id, e.message); }
     try { coachConfig.clearProfileAuth(u.id); } catch { /* nothing stored */ }
     // Their photos and videos — the one place a profile's folder under uploads/ is removed.
     try { MEDIA.removeUser(u.id); } catch (e) { console.error('media: could not remove uploads of', u.id, e.message); }

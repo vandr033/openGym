@@ -60,7 +60,7 @@ function trainingExercise(state, entry) {
   }
 }
 
-export function buildTrainingExport(state, period) {
+export function buildTrainingExport(state, period, health = null) {
   const workouts = (state.workouts || [])
     .filter(workout => dateInPeriod(workout.d, period))
     .slice()
@@ -76,8 +76,25 @@ export function buildTrainingExport(state, period) {
         ? Math.max(0, Math.round((workout.end - workout.start) / 1000)) : null,
       sessionNote: workout.note || null,
       readiness: workout.readiness || null,
+      ...(workout.appleHealth ? { appleHealth: {
+        durationSeconds: workout.appleHealth.durationSeconds,
+        averageHeartRateBpm: workout.appleHealth.averageHeartRateBpm ?? null,
+        activeEnergyKcal: workout.appleHealth.activeEnergyKcal ?? null,
+      } } : {}),
       prs: workout.prs || [],
       exercises: (workout.entries || []).map(entry => trainingExercise(state, entry)),
+    }))
+  const dailyHealth = Object.values(health?.summaries || {}).filter(day => dateInPeriod(day.date, period) && Object.keys(day).some(key => !['date', 'source', 'importedAt'].includes(key)))
+    .sort((a, b) => a.date.localeCompare(b.date)).map(day => ({
+      date: day.date,
+      health: {
+        ...(day.sleep ? Object.fromEntries([
+          ['sleepMinutes', day.sleep.totalMinutes], ['inBedMinutes', day.sleep.inBedMinutes], ['awakeMinutes', day.sleep.awakeMinutes],
+          ['coreSleepMinutes', day.sleep.coreMinutes], ['deepSleepMinutes', day.sleep.deepMinutes], ['remSleepMinutes', day.sleep.remMinutes],
+        ].filter(([, value]) => value != null)) : {}),
+        ...Object.fromEntries(['hrvSdnnMs', 'restingHeartRateBpm', 'steps', 'activeEnergyKcal', 'exerciseMinutes', 'bodyWeightKg']
+          .filter(key => day[key] != null).map(key => [key, day[key]])),
+      },
     }))
   return {
     format: TRAINING_EXPORT_FORMAT,
@@ -85,6 +102,7 @@ export function buildTrainingExport(state, period) {
     unit: state.unit || 'kg',
     bodyWeight: (state.bodyweight || []).filter(item => dateInPeriod(item.d, period))
       .map(item => ({ date: item.d, weight: item.w, unit: state.unit || 'kg' })),
+    ...(dailyHealth.length ? { dailyHealth } : {}),
     workouts,
   }
 }
@@ -186,8 +204,10 @@ export const TRAINING_AI_PROMPT = [
   '- exercises where load or rep range may need adjustment',
   '- patterns between bodyweight and performance',
   '- patterns involving RIR/RPE and performance',
+  '- careful correlations between performance, sleep, HRV, resting heart rate, bodyweight, weekly set volume and session duration when enough data exists',
   '',
   'Do not make medical diagnoses.',
+  'Do not imply causation from limited data. Keep cardiovascular metrics separate from lifting volume.',
   '',
   'Training data:'
 ].join('\n')

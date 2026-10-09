@@ -261,3 +261,47 @@ membership, the distribution certificate and profile as protected file variables
   it: a foreground service (`specialUse`) keeps the countdown in the notification and holds a
   wake lock until the end, so the end of a rest sounds on time with the screen locked; the
   rest-over alarm is only its fallback.
+
+## Apple Health (iOS native app)
+
+On first launch after HealthKit is added, openGym requests read access to workouts, steps,
+active energy, exercise minutes, weight, resting heart rate, HRV SDNN, heart rate, and sleep
+stages. Settings → **Apple Health** shows a seven-day preview and a refresh button. Data is
+read from HealthKit and cached in the app-private
+`opengym-health-cache.json` file, separate from the workout state, backups, and pairing token.
+Local and paired phone modes use the same cache. The web/PWA and Android builds do not call
+HealthKit.
+
+On a paired iPhone, **Sync health data to my openGym server** is off by default. Turn it on
+to copy normalized daily summaries and completed workout summaries into your own profile on
+the paired server. The phone uses its existing bearer token; there is no second login. The
+first upload covers 30 days, then updates from two days before the last successful day to
+catch late Health entries. It runs on launch, manual refresh, and after successful profile
+sync, with a 15-minute limit on repeated automatic uploads. The local cache holds data while
+offline; a failed upload leaves its cursor unchanged so the next successful connection retries.
+Turning the switch off stops future uploads and leaves previously uploaded data on the server.
+Pairing to a different user or server requires a new opt-in. The server stores this copy in
+`data/health-<user-id>.json`, separate from the training profile, and exposes it only through
+authenticated `GET/PUT /api/health-data`. Admin profile views omit Apple Health data. Raw
+heart-rate samples are never uploaded; the iPhone computes per-workout average and maximum
+heart rate. In workout history, **Link Apple Health Workout** suggests completed sessions by
+time overlap, duration, and type. You choose the match, can unlink it, and one HealthKit UUID
+can link to only one openGym workout. Exercises, sets, weights, and progression remain in
+openGym's workout record.
+
+Apple intentionally does not tell apps whether *read* access was denied for each type.
+“Data available” means a sample was returned; “No readable data” can mean no sample,
+denied access, or a limited history window. To change the selection, use iPhone Settings →
+Privacy & Security → Health → openGym, then tap **Refresh** in openGym.
+
+To run this feature on an iPhone:
+
+1. In `frontend/`, run `npm run build:mobile` to build the app and sync Capacitor.
+2. Open `frontend/ios/App/App.xcworkspace` in Xcode and select the **App** target.
+3. Under **Signing & Capabilities**, choose your Team and confirm **HealthKit** appears.
+   The repo includes `App/App.entitlements` with `com.apple.developer.healthkit`; if Xcode
+   does not show the capability, add **HealthKit** there. Your signing profile must carry it.
+4. Build and run on a physical iPhone with Health data. The simulator may have no samples.
+
+The only Info.plist health description is `NSHealthShareUsageDescription`, because this
+phase requests read access only. No HealthKit write entitlement or write permission is used.
