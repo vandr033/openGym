@@ -23,9 +23,10 @@ export function linkHealthWorkout(state, workout, healthWorkout) {
   const record = state.workouts.find(w => sameWorkout(w, workout))
   if (!record || !healthWorkout?.externalId) throw new Error('Workout unavailable')
   if (state.workouts.some(w => !sameWorkout(w, record) && w.appleHealth?.externalId === healthWorkout.externalId)) throw new Error('Apple Health workout is already linked')
-  const { externalId, workoutType, startAt, endAt, durationSeconds, activeEnergyKcal, averageHeartRateBpm, maxHeartRateBpm } = healthWorkout
+  const { externalId, workoutType, startAt, endAt, durationSeconds, activeEnergyKcal, distanceMeters, averageHeartRateBpm, maxHeartRateBpm } = healthWorkout
   record.appleHealth = { externalId, workoutType, startAt, endAt, durationSeconds,
     ...(activeEnergyKcal != null ? { activeEnergyKcal } : {}),
+    ...(distanceMeters != null ? { distanceMeters } : {}),
     ...(averageHeartRateBpm != null ? { averageHeartRateBpm } : {}),
     ...(maxHeartRateBpm != null ? { maxHeartRateBpm } : {}) }
   stampWorkout(record)

@@ -56,3 +56,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
 }
+
+class BridgeViewController: CAPBridgeViewController {
+    override func capacitorDidLoad() {
+        print("[HealthKit] BridgeViewController loaded; registering local plugins")
+        bridge?.registerPluginInstance(HealthKitPlugin())
+        bridge?.registerPluginInstance(PrintPlugin())
+    }
+}

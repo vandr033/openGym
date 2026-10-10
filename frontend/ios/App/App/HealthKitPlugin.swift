@@ -9,8 +9,10 @@ public class HealthKitPlugin: CAPPlugin {
 
     private var readTypes: Set<HKObjectType> {
         let quantities: [HKQuantityTypeIdentifier] = [
-            .stepCount, .activeEnergyBurned, .appleExerciseTime, .bodyMass,
-            .restingHeartRate, .heartRateVariabilitySDNN, .heartRate
+            .stepCount, .activeEnergyBurned, .basalEnergyBurned, .appleExerciseTime, .appleMoveTime,
+            .appleStandTime, .flightsClimbed, .distanceWalkingRunning, .distanceCycling,
+            .distanceSwimming, .dietaryWater, .bodyMass, .restingHeartRate,
+            .walkingHeartRateAverage, .vo2Max, .walkingSpeed, .heartRateVariabilitySDNN, .heartRate
         ]
         let types: [HKObjectType] = quantities.map { HKObjectType.quantityType(forIdentifier: $0)! }
         return Set(types + [
@@ -19,20 +21,35 @@ public class HealthKitPlugin: CAPPlugin {
     }
 
     @objc func availability(_ call: CAPPluginCall) {
-        call.resolve(["available": HKHealthStore.isHealthDataAvailable()])
+        let available = HKHealthStore.isHealthDataAvailable()
+        print("[HealthKit] Native availability invoked; available=\(available)")
+        call.resolve(["available": available])
     }
 
     @objc func requestAccess(_ call: CAPPluginCall) {
-        guard HKHealthStore.isHealthDataAvailable() else { call.reject("Apple Health is unavailable on this device"); return }
+        print("[HealthKit] Native permission request invoked")
+        guard HKHealthStore.isHealthDataAvailable() else {
+            print("[HealthKit] Native permission request stopped: HealthKit unavailable")
+            call.reject("Apple Health is unavailable on this device")
+            return
+        }
         // A successful request only means the sheet completed. Apple does not reveal read grants.
-        store.requestAuthorization(toShare: [], read: readTypes) { _, error in
-            if let error = error { call.reject(error.localizedDescription) }
-            else { call.resolve() }
+        store.requestAuthorization(toShare: [], read: readTypes) { success, error in
+            print("[HealthKit] Native permission request completed; success=\(success)")
+            if let error = error {
+                print("[HealthKit] Native permission request failed: \(error.localizedDescription)")
+                call.reject(error.localizedDescription)
+            } else { call.resolve() }
         }
     }
 
     @objc func getData(_ call: CAPPluginCall) {
-        guard HKHealthStore.isHealthDataAvailable() else { call.reject("Apple Health is unavailable on this device"); return }
+        print("[HealthKit] Native getData invoked")
+        guard HKHealthStore.isHealthDataAvailable() else {
+            print("[HealthKit] Native getData stopped: HealthKit unavailable")
+            call.reject("Apple Health is unavailable on this device")
+            return
+        }
         guard let from = call.getString("from"), let to = call.getString("to"),
               let start = ISO8601DateFormatter.healthDate(from), let end = ISO8601DateFormatter.healthDate(to),
               start < end else { call.reject("Invalid date range"); return }
@@ -42,10 +59,21 @@ public class HealthKitPlugin: CAPPlugin {
                 let dayStart = calendar.startOfDay(for: start)
                 let dayEnd = calendar.startOfDay(for: end)
                 var stats = [[String: Any]]()
+                let ml = HKUnit.literUnit(with: .milli)
+                let vo2Unit = ml.unitDivided(by: .gramUnit(with: .kilo)).unitDivided(by: .minute())
+                let speedUnit = HKUnit.meter().unitDivided(by: .second())
                 for (id, name, unit) in [
                     (HKQuantityTypeIdentifier.stepCount, "steps", HKUnit.count()),
                     (.activeEnergyBurned, "activeEnergyKcal", HKUnit.kilocalorie()),
-                    (.appleExerciseTime, "exerciseMinutes", HKUnit.minute())
+                    (.basalEnergyBurned, "basalEnergyKcal", HKUnit.kilocalorie()),
+                    (.appleExerciseTime, "exerciseMinutes", HKUnit.minute()),
+                    (.appleMoveTime, "moveMinutes", HKUnit.minute()),
+                    (.appleStandTime, "standMinutes", HKUnit.minute()),
+                    (.flightsClimbed, "flightsClimbed", HKUnit.count()),
+                    (.distanceWalkingRunning, "distanceWalkingRunningMeters", HKUnit.meter()),
+                    (.distanceCycling, "distanceCyclingMeters", HKUnit.meter()),
+                    (.distanceSwimming, "distanceSwimmingMeters", HKUnit.meter()),
+                    (.dietaryWater, "dietaryWaterMl", ml)
                 ] {
                     stats += try await dailyStats(id, name: name, unit: unit, from: dayStart, to: dayEnd)
                 }
@@ -53,6 +81,9 @@ public class HealthKitPlugin: CAPPlugin {
                 for (id, name, unit) in [
                     (HKQuantityTypeIdentifier.bodyMass, "bodyMass", HKUnit.gramUnit(with: .kilo)),
                     (.restingHeartRate, "restingHeartRate", HKUnit.count().unitDivided(by: .minute())),
+                    (.walkingHeartRateAverage, "walkingHeartRate", HKUnit.count().unitDivided(by: .minute())),
+                    (.vo2Max, "vo2Max", vo2Unit),
+                    (.walkingSpeed, "walkingSpeed", speedUnit),
                     (.heartRateVariabilitySDNN, "heartRateVariabilitySDNN", HKUnit.secondUnit(with: .milli)),
                     (.heartRate, "heartRate", HKUnit.count().unitDivided(by: .minute()))
                 ] {
@@ -77,11 +108,28 @@ public class HealthKitPlugin: CAPPlugin {
                     var item: [String: Any] = ["id": w.uuid.uuidString, "workoutType": String(describing: w.workoutActivityType),
                                                "startAt": iso.string(from: w.startDate), "endAt": iso.string(from: w.endDate),
                                                "durationSeconds": w.duration]
-                    if let energy = w.totalEnergyBurned { item["activeEnergyKcal"] = energy.doubleValue(for: .kilocalorie()) }
+                    if let energyType = HKObjectType.quantityType(forIdentifier: .activeEnergyBurned),
+                       let energy = w.statistics(for: energyType)?.sumQuantity() {
+                        item["activeEnergyKcal"] = energy.doubleValue(for: .kilocalorie())
+                    }
+                    for id in [HKQuantityTypeIdentifier.distanceWalkingRunning, .distanceCycling, .distanceSwimming] {
+                        guard let type = HKObjectType.quantityType(forIdentifier: id),
+                              let distance = w.statistics(for: type)?.sumQuantity() else { continue }
+                        item["distanceMeters"] = distance.doubleValue(for: .meter())
+                        break
+                    }
+                    if let heartType = HKObjectType.quantityType(forIdentifier: .heartRate), let heart = w.statistics(for: heartType) {
+                        if let average = heart.averageQuantity() { item["averageHeartRateBpm"] = average.doubleValue(for: HKUnit.count().unitDivided(by: .minute())) }
+                        if let maximum = heart.maximumQuantity() { item["maxHeartRateBpm"] = maximum.doubleValue(for: HKUnit.count().unitDivided(by: .minute())) }
+                    }
                     return item
                 }
+                print("[HealthKit] Native getData completed; stats=\(stats.count), samples=\(samples.count), sleep=\(sleep.count), workouts=\(workouts.count)")
                 call.resolve(["stats": stats, "samples": samples, "sleep": sleep, "workouts": workouts])
-            } catch { call.reject(error.localizedDescription) }
+            } catch {
+                print("[HealthKit] Native getData failed: \(error.localizedDescription)")
+                call.reject(error.localizedDescription)
+            }
         }
     }
 

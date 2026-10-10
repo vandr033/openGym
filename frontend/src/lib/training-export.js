@@ -74,12 +74,16 @@ export function buildTrainingExport(state, period, health = null) {
       deload: workout.deload === true || workout.program?.deload === true,
       durationSeconds: Number.isFinite(workout.end) && Number.isFinite(workout.start)
         ? Math.max(0, Math.round((workout.end - workout.start) / 1000)) : null,
+      ...(workout.cardioType ? { cardioType: workout.cardioType } : {}),
+      ...(workout.manualMetrics ? { manualMetrics: workout.manualMetrics } : {}),
       sessionNote: workout.note || null,
       readiness: workout.readiness || null,
       ...(workout.appleHealth ? { appleHealth: {
         durationSeconds: workout.appleHealth.durationSeconds,
         averageHeartRateBpm: workout.appleHealth.averageHeartRateBpm ?? null,
         activeEnergyKcal: workout.appleHealth.activeEnergyKcal ?? null,
+        ...(workout.appleHealth.distanceMeters != null ? { distanceMeters: workout.appleHealth.distanceMeters } : {}),
+        ...(workout.appleHealth.maxHeartRateBpm != null ? { maxHeartRateBpm: workout.appleHealth.maxHeartRateBpm } : {}),
       } } : {}),
       prs: workout.prs || [],
       exercises: (workout.entries || []).map(entry => trainingExercise(state, entry)),
@@ -92,7 +96,9 @@ export function buildTrainingExport(state, period, health = null) {
           ['sleepMinutes', day.sleep.totalMinutes], ['inBedMinutes', day.sleep.inBedMinutes], ['awakeMinutes', day.sleep.awakeMinutes],
           ['coreSleepMinutes', day.sleep.coreMinutes], ['deepSleepMinutes', day.sleep.deepMinutes], ['remSleepMinutes', day.sleep.remMinutes],
         ].filter(([, value]) => value != null)) : {}),
-        ...Object.fromEntries(['hrvSdnnMs', 'restingHeartRateBpm', 'steps', 'activeEnergyKcal', 'exerciseMinutes', 'bodyWeightKg']
+        ...Object.fromEntries(['hrvSdnnMs', 'restingHeartRateBpm', 'walkingHeartRateBpm', 'vo2MaxMlPerKgMin', 'walkingSpeedMetersPerSecond',
+          'steps', 'activeEnergyKcal', 'basalEnergyKcal', 'totalEnergyKcal', 'exerciseMinutes', 'moveMinutes', 'standMinutes', 'flightsClimbed',
+          'distanceWalkingRunningMeters', 'distanceCyclingMeters', 'distanceSwimmingMeters', 'dietaryWaterMl', 'bodyWeightKg']
           .filter(key => day[key] != null).map(key => [key, day[key]])),
       },
     }))

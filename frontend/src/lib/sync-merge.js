@@ -213,8 +213,9 @@ const workoutTime = w => Number(w?._ts) || Number(w?.end) || Number(w?.start) ||
 
 // What a reset records of the entries it wiped (resetIds), by field: how an entry is named.
 const bodyweightKey = e => `${e?.d}|${e?.t ?? ''}`
+const waterKey = e => e?.id ?? `${e?.t}|${e?.ml}`
 const RESET_LISTS = {
-  workouts: workoutKey, routines: x => x?.id, programs: x => x?.id, customEx: x => x?.id, bodyweight: bodyweightKey,
+  workouts: workoutKey, routines: x => x?.id, programs: x => x?.id, customEx: x => x?.id, bodyweight: bodyweightKey, water: waterKey,
   gymCards: x => x?.id, equipProfiles: x => x?.id, favEx: x => x,
 }
 const RESET_MAPS = ['exNotes', 'barWeights', 'balanceOverrides', 'loadKind', 'plates']
@@ -271,6 +272,7 @@ export function sinceReset(S, at, ids) {
     out.programs = list(S.programs).filter(p => p && after(p._ts))
     out.customEx = list(S.customEx).filter(c => c && after(c._ts))
     out.bodyweight = list(S.bodyweight).filter(e => e && after(e.t))
+    out.water = list(S.water).filter(e => e && after(e.t))
     // No time of their own: taken for what they were before the reset, which cleared them.
     out.equipProfiles = []
     out.gymCards = []
@@ -403,6 +405,7 @@ export function mergeStates(a0, b0, { prefer } = {}) {
     })
   }
   out.bodyweight = mergeBodyweight(n.bodyweight, o.bodyweight).map(clone)
+  out.water = unionById(n.water, o.water, waterKey).map(clone)
   if (list(n.favEx).length || list(o.favEx).length) out.favEx = [...new Set([...list(n.favEx), ...list(o.favEx)])]
   out.exWeights = clone(mergeExWeights(n.exWeights, o.exWeights))
   for (const [id, sources] of editedBy) {
@@ -505,9 +508,13 @@ export function localExtras(local, server) {
   const from = unitOf(local), to = unitOf(server)
   const differs = (mine, theirs) =>
     (Number(mine.t) || 0) > (Number(theirs.t) || 0) && Number(convertBodyWeight(mine.w, from, to)) !== Number(theirs.w)
-  return {
+  const extras = {
     workouts: list(local?.workouts).filter(w => !have.has(workoutKey(w))).length,
     bodyweight: list(local?.bodyweight).filter(e => e && e.d != null && (!days.has(e.d) || differs(e, days.get(e.d)))).length,
     customEx: list(local?.customEx).filter(e => e && !ex.has(e.id)).length
   }
+  const waterOnServer = new Set(list(server?.water).map(waterKey))
+  const water = list(local?.water).filter(e => e && !waterOnServer.has(waterKey(e))).length
+  if (water) extras.water = water
+  return extras
 }

@@ -33,7 +33,7 @@ import { exerciseHistory } from './lib/exercise-history.js'
 import { policyFor, defaultIncrement, POLICIES_FOR, POLICY_NAME, POLICY_DESC, MAX_BW_SETS, weightIncrement } from './lib/progression.js'
 import { normalizeRepRange } from './lib/rep-range.js'
 import { MOBILE, shareExport, printHtml } from './lib/mobile.js'
-import { speedUnitOf, toSpeed, fromSpeed } from './lib/speed.js'
+import { speedUnitOf, toSpeed, fromSpeed, fmtSpeed } from './lib/speed.js'
 import { buildCompletedWorkout } from './lib/finish-workout.js'
 import { isWarmupRow, hasCompletedWork } from './lib/workout-model.js'
 import { saveSessionAsRoutine } from './lib/session-routines.js'
@@ -44,12 +44,12 @@ import { isFav, toggleFav, sortFavouritesFirst } from './lib/favourites.js'
 import { buildSessionEntries, buildPlannedEntry, builtOutOfProgression } from './lib/session-start.js'
 import { joinSessionNoProg } from './lib/session-noprog.js'
 import { buildCombinedEntries, deriveSessionName } from './lib/session-merge.js'
-import { workoutsOn, backfillStart, backfillEnd, completeBackfill, historyAsOf, sessionHistory } from './lib/backfill.js'
+import { workoutsOn, backfillStart, backfillEnd, completeBackfill, historyAsOf, sessionHistory, insertChronological } from './lib/backfill.js'
 import { moveWorkout, sameWorkout, startTimeOf, durationMinOf, setWorkoutDuration, rebuildPrHistory } from './lib/workout-date.js'
 import { editCompletedSession, editLeftEmpty, editedRecord, editChangesNothing } from './lib/session-edit.js'
 import { stampWorkout } from './lib/sync-merge.js'
 import { candidateHealthWorkouts, linkHealthWorkout, unlinkHealthWorkout } from './lib/health/workoutLink.js'
-import { readHealthView } from './lib/health/healthService.js'
+import { readHealthView, readHealthCache, refreshHealthRange } from './lib/health/healthService.js'
 import { weeklyWeights } from './lib/bodyweight.js'
 import { workoutText } from './lib/workout-text.js'
 import { copyText } from './lib/clipboard.js'
@@ -76,23 +76,26 @@ function ConfirmDialog({ title, message, confirmText, cancelText, danger, onConf
 }
 // "1 workouts and 1 weigh-ins" read wrong: a count of one takes the singular, per noun. Four
 // whole sentences rather than two spliced counts, so every language keeps its own word order.
-export function addDeviceDataMessage(workouts, weighIns) {
+export function addDeviceDataMessage(workouts, weighIns, water = 0) {
   const one = n => Number(n) === 1
-  return one(workouts)
+  const message = one(workouts)
     ? one(weighIns)
       ? t('{0} workout and {1} weigh-in were logged on this device while signed out. Add them to your profile, or keep the profile exactly as it is on the server.', workouts, weighIns)
       : t('{0} workout and {1} weigh-ins were logged on this device while signed out. Add them to your profile, or keep the profile exactly as it is on the server.', workouts, weighIns)
     : one(weighIns)
       ? t('{0} workouts and {1} weigh-in were logged on this device while signed out. Add them to your profile, or keep the profile exactly as it is on the server.', workouts, weighIns)
       : t('{0} workouts and {1} weigh-ins were logged on this device while signed out. Add them to your profile, or keep the profile exactly as it is on the server.', workouts, weighIns)
+  if (!water) return message
+  if (!workouts && !weighIns) return t('{0} water entries were logged on this device while signed out. Add them to your profile, or keep the profile exactly as it is on the server.', water)
+  return message + ' ' + t('{0} water entries were also logged on this device.', water)
 }
 // Sign-in found workouts on this device that the profile does not have (logged while signed
 // out). The profile is the truth — settings and plan come from the server either way — the
 // question is only whether these entries are added to it or dropped. Resolves true to add.
 export function askAddDeviceData(extras) {
   return new Promise(resolve => confirmSheet({
-    title: t('Add this device\'s workouts to your profile?'),
-    message: addDeviceDataMessage(extras.workouts, extras.bodyweight),
+    title: t(extras.water && !extras.workouts && !extras.bodyweight ? 'Add this device\'s water logs to your profile?' : 'Add this device\'s workouts to your profile?'),
+    message: addDeviceDataMessage(extras.workouts, extras.bodyweight, extras.water),
     confirmText: t('Add them'), cancelText: t('Keep profile as is'),
     onConfirm: () => resolve(true), onCancel: () => resolve(false), locked: true
   }))
@@ -2376,30 +2379,112 @@ function WorkoutDurationEdit({ w, onDone, close }) {
 }
 export const workoutDurationSheet = (w, onDone) => ui().openSheet(close => <WorkoutDurationEdit w={w} onDone={onDone} close={close} />)
 
+const CARDIO_TYPES = [
+  { value: 'running', label: 'Running', exerciseId: '0685' }, { value: 'walking', label: 'Walking', exerciseId: '3666' },
+  { value: 'cycling', label: 'Cycling', exerciseId: '2331' }, { value: 'swimming', label: 'Swimming' }, { value: 'other', label: 'Other cardio' },
+]
+const cardioName = type => t(CARDIO_TYPES.find(option => option.value === type)?.label || 'Cardio')
+const distanceFactor = S => speedUnitOf(S) === 'mph' ? 1609.344 : 1000
+// ponytail: Swimming/Other stay standalone until the exercise catalog has matching cardio IDs.
+const cardioEntries = (type, minutes, distanceMeters) => {
+  const id = CARDIO_TYPES.find(option => option.value === type)?.exerciseId
+  if (!id) return []
+  const speed = distanceMeters > 0 ? distanceMeters / 1000 * 60 / minutes : 0
+  const target = { mode: 'cardio', min: minutes, speed }
+  return [{ id, target, sets: [{ min: minutes, speed, done: true }] }]
+}
+
+function WorkoutMetricsEdit({ w, close }) {
+  const st = useStore(s => s.S)
+  const [duration, setDuration] = useState(durationMinOf(w))
+  const [type, setType] = useState(w.cardioType || 'other')
+  const [metrics, setMetrics] = useState(() => {
+    const saved = w.manualMetrics || {}
+    return { ...saved, distance: saved.distanceMeters == null ? null : saved.distanceMeters / distanceFactor(st) }
+  })
+  const factor = distanceFactor(st)
+  const setMetric = (key, value) => setMetrics(current => ({ ...current, [key]: value }))
+  const invalid = !(duration >= 1 && duration <= 1440) ||
+    ['activeEnergyKcal', 'totalEnergyKcal'].some(key => metrics[key] != null && metrics[key] > 100000) ||
+    ['averageHeartRateBpm', 'maxHeartRateBpm'].some(key => metrics[key] != null && metrics[key] > 300) ||
+    (metrics.distance != null && metrics.distance * factor > 1000000) ||
+    (metrics.activeEnergyKcal != null && metrics.totalEnergyKcal != null && metrics.totalEnergyKcal < metrics.activeEnergyKcal) ||
+    (metrics.averageHeartRateBpm != null && metrics.maxHeartRateBpm != null && metrics.maxHeartRateBpm < metrics.averageHeartRateBpm)
+  const save = () => {
+    if (invalid) { toast(t('Check the duration, distance, calories and heart-rate values.')); return }
+    const saved = Object.fromEntries(['activeEnergyKcal', 'totalEnergyKcal', 'averageHeartRateBpm', 'maxHeartRateBpm']
+      .filter(key => metrics[key] != null).map(key => [key, Math.round(metrics[key] * 10) / 10]))
+    if (metrics.distance != null) saved.distanceMeters = Math.round(metrics.distance * factor)
+    update(s => {
+      const longer = setWorkoutDuration(s.workouts, w, duration)
+      if (longer) s.workouts = longer
+      const record = s.workouts.find(x => sameWorkout(x, w))
+      if (!record) return
+      if (record.cardioType) {
+        record.cardioType = type; record.name = cardioName(type)
+        record.entries = cardioEntries(type, duration, saved.distanceMeters)
+      }
+      if (Object.keys(saved).length) record.manualMetrics = saved
+      else delete record.manualMetrics
+      stampWorkout(record)
+    })
+    close()
+    toast(t('Workout details saved'))
+  }
+  const metric = (title, key, unit, decimal = true) => <Row key={key} title={t(title)}>
+    <div className="row" style={{ gap: 6 }}><NumberField value={metrics[key] ?? null} nullable decimal={decimal} onChange={value => setMetric(key, value)} /><span className="small dim">{unit}</span></div>
+  </Row>
+  return <>
+    <h3>{w.cardioType ? t('Edit cardio session') : t('Workout tracker data')}</h3>
+    <div className="small dim" style={{ marginBottom: 10 }}>Optional readings from a watch, treadmill or bike. They stay separate from lifting sets.</div>
+    {w.cardioType && <SelectRow icon="figureRun" title={t('Activity')} value={type} options={CARDIO_TYPES.map(option => ({ ...option, label: t(option.label) }))} onChange={setType} />}
+    <Stepper label={t('Total time')} unit={t('min')} value={duration} step={5} min={0} max={1440} decimal={false} onChange={setDuration} />
+    {metric('Active calories', 'activeEnergyKcal', 'kcal', false)}
+    {metric('Total calories', 'totalEnergyKcal', 'kcal', false)}
+    {metric('Average HR', 'averageHeartRateBpm', 'bpm', false)}
+    {metric('Max HR', 'maxHeartRateBpm', 'bpm', false)}
+    {metric('Distance', 'distance', speedUnitOf(st) === 'mph' ? 'mi' : 'km')}
+    {invalid && <div role="alert" className="small" style={{ color: 'var(--red)', marginTop: 6 }}>Duration must be 1–1,440 min; calories, distance and heart rate must be plausible.</div>}
+    <div style={{ height: 14 }} />
+    <Button variant="primary" disabled={invalid} onClick={save}>{t('Save')}</Button>
+  </>
+}
+
+export const workoutMetricsSheet = w => ui().openSheet(close => <WorkoutMetricsEdit w={w} close={close} />)
+
+async function openHealthWorkoutChooser(w) {
+  let workouts
+  try {
+    if (MOBILE) {
+      const cache = await readHealthCache()
+      if (!cache.requested) { toast(t('Connect Apple Health first')); return }
+      await refreshHealthRange(w.d, w.d)
+      workouts = (await readHealthCache()).workouts || []
+    } else workouts = (await (await import('./lib/api.js')).api('/api/health-data')).workouts || []
+  } catch (error) { toast(t('Could not load Apple Health workouts')); return }
+  const choices = candidateHealthWorkouts(w, workouts, S().workouts)
+  if (!choices.length) { toast(t('No possible Apple Health matches found')); return }
+  menuSheet({ title: t('Link Apple Health Workout'), subtitle: t('Choose the completed workout that matches this session.'),
+    items: choices.map(h => ({ icon: 'heart', label: h.workoutType.replace(/([a-z])([A-Z])/g, '$1 $2'),
+      sub: [new Date(h.startAt).toLocaleString(), fmtDur(h.durationSeconds * 1000), h.activeEnergyKcal != null ? `${h.activeEnergyKcal} active kcal` : null,
+        h.distanceMeters != null ? `${fmtNum(h.distanceMeters / distanceFactor(S()))} ${speedUnitOf(S()) === 'mph' ? 'mi' : 'km'}` : null,
+        h.averageHeartRateBpm != null ? `${h.averageHeartRateBpm} bpm avg` : null,
+        h.maxHeartRateBpm != null ? `${h.maxHeartRateBpm} bpm max` : null].filter(Boolean).join(' · '),
+      onClick: () => {
+        try { update(s => { linkHealthWorkout(s, w, h) }); toast(t('Apple Health workout linked')) }
+        catch (error) { toast(t(error.message)) }
+      } })) })
+}
+
 function WorkoutDetail({ w, close }) {
   const noteRef = useRef(null)
   const onNoteFocus = useSheetKeyboard(noteRef)
   const st = useStore(s => s.S)
   const user = useStore(s => s.user)
   const update = useStore(s => s.update)
-  const linked = (st.workouts.find(x => sameWorkout(x, w)) || w).appleHealth
-  const chooseHealthWorkout = async () => {
-    let workouts
-    try {
-      workouts = MOBILE
-        ? (await (await import('./lib/health/healthService.js')).readHealthCache()).workouts || []
-        : (await (await import('./lib/api.js')).api('/api/health-data')).workouts || []
-    } catch (e) { toast(t('Could not load Apple Health workouts')); return }
-    const choices = candidateHealthWorkouts(w, workouts, S().workouts)
-    if (!choices.length) { toast(t('No possible Apple Health matches found')); return }
-    menuSheet({ title: t('Link Apple Health Workout'), subtitle: t('Choose the completed workout that matches this session.'),
-      items: choices.map(h => ({ icon: 'heart', label: h.workoutType.replace(/([a-z])([A-Z])/g, '$1 $2'),
-        sub: `${new Date(h.startAt).toLocaleString()} · ${fmtDur(h.durationSeconds * 1000)}`,
-        onClick: () => {
-          try { update(s => { linkHealthWorkout(s, w, h) }); toast(t('Apple Health workout linked')) }
-          catch (e) { toast(t(e.message)) }
-        } })) })
-  }
+  const savedWorkout = st.workouts.find(x => sameWorkout(x, w)) || w
+  const linked = savedWorkout.appleHealth
+  const manual = savedWorkout.manualMetrics || {}
   // The session note is editable here rather than only at the finish sheet: what you want to
   // record about a session is often clearer once you have looked at what you actually did.
   const [note, setNote] = useState(w.note || '')
@@ -2477,7 +2562,12 @@ function WorkoutDetail({ w, close }) {
   const grouped = groups.length > 1 || (groups[0] && groups[0].rid && (w.routineIds || []).length > 1)
   return <>
     <h3>{w.name}</h3>
-    <div className="muted small" style={{ marginBottom: 12 }}>{[fmtDate(w.d, true), ...durPart(w.end - w.start), fmtVol(w.vol, st.unit), ...(w.bw ? [fmtNum(w.bw) + ' ' + st.unit] : [])].join(' · ')}</div>
+    <div className="muted small" style={{ marginBottom: 12 }}>{[fmtDate(w.d, true), ...durPart(w.end - w.start), ...(!w.cardioType ? [fmtVol(w.vol, st.unit)] : []), ...(w.bw ? [fmtNum(w.bw) + ' ' + st.unit] : [])].join(' · ')}</div>
+    {w.cardioType && <div style={{ marginBottom: 12 }}>
+      <Row title={t('Activity')} value={cardioName(w.cardioType)} />
+      {(manual.distanceMeters ?? linked?.distanceMeters) != null && <Row title={t('Distance')} value={`${fmtNum((manual.distanceMeters ?? linked.distanceMeters) / distanceFactor(st))} ${speedUnitOf(st) === 'mph' ? 'mi' : 'km'}`} />}
+      {(manual.distanceMeters ?? linked?.distanceMeters) > 0 && w.end > w.start && <Row title={t('Average speed')} value={fmtSpeed((manual.distanceMeters ?? linked.distanceMeters) / 1000 / ((w.end - w.start) / 3600000), speedUnitOf(st))} />}
+    </div>}
     {grouped ? groups.map(g => {
       const r = g.rid ? st.routines.find(x => x.id === g.rid) : null
       const items = g.items.map(i => w.entries[i])
@@ -2495,15 +2585,28 @@ function WorkoutDetail({ w, close }) {
     }) : entryRows(groups[0]?.units || [])}
     {/* Progress photos and form-check videos: added and removed right here, on the saved record. */}
     <WorkoutMediaSection w={w} />
+    {(Object.keys(manual).length > 0 || w.cardioType) && <div style={{ margin: '16px 0' }}>
+      <div className="small muted" style={{ marginBottom: 6 }}>{t('Tracker data · manual')}</div>
+      {manual.activeEnergyKcal != null && <Row title={t('Active calories')} value={`${fmtNum(manual.activeEnergyKcal)} kcal`} />}
+      {manual.totalEnergyKcal != null && <Row title={t('Total calories')} value={`${fmtNum(manual.totalEnergyKcal)} kcal`} />}
+      {manual.averageHeartRateBpm != null && <Row title={t('Average HR')} value={`${fmtNum(manual.averageHeartRateBpm)} bpm`} />}
+      {manual.maxHeartRateBpm != null && <Row title={t('Max HR')} value={`${fmtNum(manual.maxHeartRateBpm)} bpm`} />}
+      {!w.cardioType && manual.distanceMeters != null && <Row title={t('Distance')} value={`${fmtNum(manual.distanceMeters / distanceFactor(st))} ${speedUnitOf(st) === 'mph' ? 'mi' : 'km'}`} />}
+      <Button icon="pencil" onClick={() => workoutMetricsSheet(savedWorkout)}>{t(w.cardioType ? 'Edit cardio session' : 'Edit workout tracker data')}</Button>
+    </div>}
+    {!w.cardioType && Object.keys(manual).length === 0 && <div style={{ margin: '16px 0' }}>
+      <Button icon="chartLine" onClick={() => workoutMetricsSheet(savedWorkout)}>{t('Add workout tracker data')}</Button>
+    </div>}
     {(linked || MOBILE || user) && <div style={{ margin: '16px 0' }}>
       <div className="small muted" style={{ marginBottom: 6 }}>{t('Apple Health')}</div>
       {linked ? <>
         <Row title={t('Duration')} value={fmtDur(linked.durationSeconds * 1000)} />
         {linked.averageHeartRateBpm != null && <Row title={t('Avg HR')} value={`${linked.averageHeartRateBpm} bpm`} />}
         {linked.maxHeartRateBpm != null && <Row title={t('Max HR')} value={`${linked.maxHeartRateBpm} bpm`} />}
-        {linked.activeEnergyKcal != null && <Row title={t('Active energy')} value={`${linked.activeEnergyKcal} kcal`} />}
+        {linked.activeEnergyKcal != null && <Row title={t('Active calories')} value={`${linked.activeEnergyKcal} kcal`} />}
+        {linked.distanceMeters != null && <Row title={t('Distance')} value={`${fmtNum(linked.distanceMeters / distanceFactor(st))} ${speedUnitOf(st) === 'mph' ? 'mi' : 'km'}`} />}
         <Button onClick={() => update(s => { unlinkHealthWorkout(s, w) })}>{t('Unlink Apple Health Workout')}</Button>
-      </> : <Button icon="link" onClick={chooseHealthWorkout}>{t('Link Apple Health Workout')}</Button>}
+      </> : <Button icon="link" onClick={() => openHealthWorkoutChooser(w)}>{t('Link Apple Health Workout')}</Button>}
     </div>}
     <div className="small muted" style={{ margin: '4px 0 6px' }}>{t('Session note')}</div>
     <textarea ref={noteRef} className="input" rows={2} maxLength={NOTE_MAX} value={note}
@@ -2610,12 +2713,24 @@ export const calendarSheet = start => ui().openSheet(close => <Calendar start={s
 /* shared small workout row (used in lists) */
 export function WorkoutRow({ w, onClick }) {
   const st = useStore(s => s.S)
-  const glyph = glyphOf((st.routines.find(r => r.id === w.routineId) || {}).emoji)
+  const glyph = w.cardioType ? 'figureRun' : glyphOf((st.routines.find(r => r.id === w.routineId) || {}).emoji)
   const mediaN = workoutMediaCount(w)
+  const durationMs = Math.max(0, (w.end || w.start || 0) - (w.start || 0))
+  const distance = w.manualMetrics?.distanceMeters ?? w.appleHealth?.distanceMeters
+  const metrics = [fmtDate(w.d, true), ...durPart(durationMs)]
+  if (w.cardioType) {
+    if (distance != null) metrics.push(`${fmtNum(distance / distanceFactor(st))} ${speedUnitOf(st) === 'mph' ? 'mi' : 'km'}`)
+    const calories = w.manualMetrics?.activeEnergyKcal ?? w.appleHealth?.activeEnergyKcal
+    if (calories != null) metrics.push(`${fmtNum(calories)} kcal`)
+  } else {
+    metrics.push(t('{0} sets', setsDone(w)), fmtVol(w.vol, st.unit))
+    const calories = w.manualMetrics?.activeEnergyKcal ?? w.appleHealth?.activeEnergyKcal
+    if (calories != null) metrics.push(`${fmtNum(calories)} kcal`)
+  }
   return <div className="item" {...tappable(onClick)}>
     <span className="lrow-i" style={{ width: 34, height: 34, borderRadius: 8, fontSize: 19 }}><Icon name={glyph} /></span>
     <div className="grow"><div className="tt">{w.name}</div>
-      <div className="ss">{[fmtDate(w.d, true), ...durPart(w.end - w.start), t('{0} sets', setsDone(w)), fmtVol(w.vol, st.unit)].join(' · ')}</div></div>
+      <div className="ss">{metrics.join(' · ')}</div></div>
     {mediaN > 0 && <span className="wrow-media" title={t(mediaN === 1 ? '{0} photo or video' : '{0} photos or videos', mediaN)} aria-label={t(mediaN === 1 ? '{0} photo or video' : '{0} photos or videos', mediaN)}><Icon name="image" />{mediaN}</span>}
     {w.prs && w.prs.length > 0 && <span className="pr"><Icon name="trophy" />{w.prs.length} PR</span>}
     <Icon name="chevronRight" className="chev" />
@@ -2741,6 +2856,103 @@ export function logPastWorkoutSheet(initial) {
   const from = typeof initial?.iso === 'string' ? initial : null
   ui().openSheet(close => <LogPastWorkout initial={from} close={close} />)
 }
+
+function LogCardioSession({ close }) {
+  const st = useStore(s => s.S)
+  const now = new Date()
+  const [type, setType] = useState('running')
+  const [date, setDate] = useState(todayISO())
+  const [time, setTime] = useState(`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`)
+  const [duration, setDuration] = useState(30)
+  const [metrics, setMetrics] = useState({ distance: null, activeEnergyKcal: null, totalEnergyKcal: null, averageHeartRateBpm: null, maxHeartRateBpm: null })
+  const factor = distanceFactor(st)
+  const setMetric = (key, value) => setMetrics(current => ({ ...current, [key]: value }))
+  const invalid = !date || date > todayISO() || !(duration >= 1 && duration <= 1440) ||
+    ['activeEnergyKcal', 'totalEnergyKcal'].some(key => metrics[key] != null && metrics[key] > 100000) ||
+    ['averageHeartRateBpm', 'maxHeartRateBpm'].some(key => metrics[key] != null && metrics[key] > 300) ||
+    (metrics.distance != null && metrics.distance * factor > 1000000) ||
+    (metrics.activeEnergyKcal != null && metrics.totalEnergyKcal != null && metrics.totalEnergyKcal < metrics.activeEnergyKcal) ||
+    (metrics.averageHeartRateBpm != null && metrics.maxHeartRateBpm != null && metrics.maxHeartRateBpm < metrics.averageHeartRateBpm)
+  const save = () => {
+    if (invalid) { toast(t('Check the date, duration, distance, calories and heart-rate values.')); return }
+    const start = backfillStart(date, time)
+    const record = { id: uid(), d: date, start, end: start + Math.round(duration) * 60000, routineIds: [], routineId: null,
+      name: cardioName(type), cardioType: type, bw: null, entries: [], prs: [], vol: 0 }
+    const manual = Object.fromEntries(['activeEnergyKcal', 'totalEnergyKcal', 'averageHeartRateBpm', 'maxHeartRateBpm']
+      .filter(key => metrics[key] != null).map(key => [key, Math.round(metrics[key] * 10) / 10]))
+    if (metrics.distance != null) manual.distanceMeters = Math.round(metrics.distance * factor)
+    if (Object.keys(manual).length) record.manualMetrics = manual
+    record.entries = cardioEntries(type, duration, manual.distanceMeters)
+    stampWorkout(record)
+    update(s => { s.workouts = insertChronological(s.workouts, record) })
+    useStore.getState().autoBackupNow()
+    close()
+    toast(t('Cardio session logged'))
+  }
+  const field = (title, key, unit, decimal = false) => <Row key={key} title={t(title)}>
+    <div className="row" style={{ gap: 6 }}><NumberField value={metrics[key] ?? null} nullable decimal={decimal} onChange={value => setMetric(key, value)} /><span className="small dim">{unit}</span></div>
+  </Row>
+  return <>
+    <h3>{t('Log cardio session')}</h3>
+    <div className="small dim" style={{ marginBottom: 10 }}>Cardio stays in workout history and does not affect lifting volume or progression.</div>
+    <SelectRow icon="figureRun" title={t('Activity')} value={type} options={CARDIO_TYPES.map(option => ({ ...option, label: t(option.label) }))} onChange={setType} />
+    <Row icon="calendar" title={t('Date')}><input type="date" className="timef" value={date} max={todayISO()} onChange={e => setDate(e.target.value)} /></Row>
+    <Row icon="clock" title={t('Start time')}><input type="time" className="timef" value={time} onChange={e => setTime(e.target.value)} /></Row>
+    <Stepper label={t('Total time')} unit={t('min')} value={duration} step={5} min={0} max={1440} decimal={false} onChange={setDuration} />
+    {field('Distance', 'distance', speedUnitOf(st) === 'mph' ? 'mi' : 'km', true)}
+    {field('Active calories', 'activeEnergyKcal', 'kcal')}
+    {field('Total calories', 'totalEnergyKcal', 'kcal')}
+    {field('Average HR', 'averageHeartRateBpm', 'bpm')}
+    {field('Max HR', 'maxHeartRateBpm', 'bpm')}
+    {invalid && <div role="alert" className="small" style={{ color: 'var(--red)', marginTop: 6 }}>Use today or an earlier date, 1–1,440 min, and plausible tracker values.</div>}
+    <div style={{ height: 14 }} />
+    <Button variant="primary" disabled={invalid} onClick={save}>{t('Save cardio session')}</Button>
+  </>
+}
+export const logCardioSessionSheet = () => {
+  if (S().active) { toast(t('Finish the current workout first.')); return }
+  ui().openSheet(close => <LogCardioSession close={close} />)
+}
+
+function WaterTracking({ close }) {
+  const st = useStore(s => s.S)
+  const [custom, setCustom] = useState(250)
+  const day = todayISO()
+  const entries = (st.water || []).filter(entry => isoOf(new Date(entry.t)) === day).sort((a, b) => b.t - a.t)
+  const total = entries.reduce((sum, entry) => sum + (Number(entry.ml) || 0), 0)
+  const goal = st.waterGoalMl || 2000
+  const add = ml => {
+    const amount = Math.round(Number(ml))
+    if (!(amount >= 1 && amount <= 5000)) return
+    update(s => { (s.water ||= []).push({ id: uid(), t: Date.now(), ml: amount }) })
+    useStore.getState().autoBackupNow()
+  }
+  const change = mut => { update(mut); useStore.getState().autoBackupNow() }
+  const setGoal = waterGoalMl => change(s => { s.waterGoalMl = waterGoalMl })
+  return <>
+    <h3>{t('Water')}</h3>
+    <div className="row between" style={{ marginBottom: 8 }}><strong>{total.toLocaleString()} ml</strong><span className="small dim">{t('of {0} ml', goal.toLocaleString())}</span></div>
+    <div role="progressbar" aria-label={t('Water goal')} aria-valuenow={Math.min(total, goal)} aria-valuemin={0} aria-valuemax={goal}
+      style={{ height: 6, borderRadius: 99, overflow: 'hidden', background: 'var(--surface-3)', marginBottom: 12 }}>
+      <div style={{ width: `${Math.min(100, total / goal * 100)}%`, height: '100%', background: 'var(--teal)' }} />
+    </div>
+    <div className="row" style={{ gap: 8, marginBottom: 12 }}>
+      {[250, 500].map(ml => <Button key={ml} variant="tinted" icon="plus" onClick={() => add(ml)}>{ml} ml</Button>)}
+    </div>
+    <Row title={t('Custom amount')}>
+      <div className="row" style={{ gap: 8 }}><NumberField value={custom} decimal={false} onChange={setCustom} /><span className="small dim">ml</span><Button size="sm" onClick={() => add(custom)}>{t('Add')}</Button></div>
+    </Row>
+    <Stepper label={t('Daily goal')} unit="ml" value={goal} step={250} min={500} max={10000} decimal={false} onChange={setGoal} />
+    <h4 className="sec">{t('Today’s log')}</h4>
+    {entries.length ? entries.map(entry => <Row key={entry.id} title={`${entry.ml.toLocaleString()} ml`} subtitle={new Date(entry.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}>
+      <Button size="sm" variant="ghost" icon="xmark" aria-label={t('Remove water entry')} onClick={() => change(s => { s.water = (s.water || []).filter(x => x.id !== entry.id) })} />
+    </Row>) : <div className="small dim">{t('No water logged today yet.')}</div>}
+    <div style={{ height: 12 }} />
+    <Button variant="ghost" onClick={close}>{t('Done')}</Button>
+  </>
+}
+export const waterTrackingSheet = () => ui().openSheet(close => <WaterTracking close={close} />)
+
 // A backfilled session is built the way a live one is (buildCombinedEntries → buildPlannedEntry),
 // so its entries carry the same stamps: the routine list, per-entry rid and the plan, no
 // top-level routineId. One routine from the picker, or every routine of a missed combined day.
@@ -3194,11 +3406,15 @@ export function exitWorkoutEdit(onExit = () => nav('/history')) {
 
 function FinishSummary({ w, prs, e1prs = [], close }) {
   const st = useStore(s => s.S)
+  const user = useStore(s => s.user)
+  const latest = st.workouts.find(x => sameWorkout(x, w)) || w
+  const linked = latest.appleHealth
+  const metrics = latest.manualMetrics || {}
   return <div style={{ textAlign: 'center', padding: '8px 0' }}>
     <div style={{ fontSize: 44, display: 'flex', justifyContent: 'center', color: 'var(--acc)' }}><Icon name="trophy" /></div>
     <h3 style={{ margin: '8px 0' }}>{t('Workout complete!')}</h3>
     <div className="tiles" style={{ textAlign: 'start' }}>
-      <div className="tile"><div className="l">{t('Duration')}</div><div className="v" style={{ fontSize: '1.1rem' }}>{fmtDur(w.end - w.start)}</div></div>
+      <div className="tile"><div className="l">{t('Duration')}</div><div className="v" style={{ fontSize: '1.1rem' }}>{fmtDur(latest.end - latest.start)}</div></div>
       <div className="tile"><div className="l">{t('Volume')}</div><div className="v" style={{ fontSize: '1.1rem' }}>{fmtVol(w.vol, st.unit)}</div></div>
       <div className="tile"><div className="l">{t('Sets')}</div><div className="v" style={{ fontSize: '1.1rem' }}>{setsWorkCount(setsDone(w), workSetsDone(w))}</div></div>
       <div className="tile"><div className="l">{t('PRs')}</div><div className="v" style={{ fontSize: 20 }}>{prs.length || '—'}</div></div>
@@ -3213,6 +3429,27 @@ function FinishSummary({ w, prs, e1prs = [], close }) {
     {/* The moment for a progress photo or the clip of a set: the workout is already saved, so
         what is added here goes straight onto its record. */}
     <div style={{ textAlign: 'start' }}><WorkoutMediaSection w={w} hint /></div>
+    {(linked || MOBILE || user) && <div style={{ textAlign: 'start', margin: '12px 0' }}>
+      {linked ? <>
+        <div className="small muted" style={{ marginBottom: 6 }}>{t('Apple Health')}</div>
+        {linked.durationSeconds != null && <Row title={t('Duration')} value={fmtDur(linked.durationSeconds * 1000)} />}
+        {linked.activeEnergyKcal != null && <Row title={t('Active calories')} value={`${linked.activeEnergyKcal} kcal`} />}
+        {linked.averageHeartRateBpm != null && <Row title={t('Average HR')} value={`${linked.averageHeartRateBpm} bpm`} />}
+        {linked.maxHeartRateBpm != null && <Row title={t('Max HR')} value={`${linked.maxHeartRateBpm} bpm`} />}
+        {linked.distanceMeters != null && <Row title={t('Distance')} value={`${fmtNum(linked.distanceMeters / distanceFactor(st))} ${speedUnitOf(st) === 'mph' ? 'mi' : 'km'}`} />}
+      </> : <Button icon="link" onClick={() => openHealthWorkoutChooser(w)}>{t('Link Apple Health Workout')}</Button>}
+    </div>}
+    {!MOBILE && <div style={{ textAlign: 'start', margin: '12px 0' }}>
+      {Object.keys(metrics).length > 0 && <>
+        <div className="small muted" style={{ marginBottom: 6 }}>{t('Tracker data · manual')}</div>
+        {metrics.activeEnergyKcal != null && <Row title={t('Active calories')} value={`${fmtNum(metrics.activeEnergyKcal)} kcal`} />}
+        {metrics.totalEnergyKcal != null && <Row title={t('Total calories')} value={`${fmtNum(metrics.totalEnergyKcal)} kcal`} />}
+        {metrics.averageHeartRateBpm != null && <Row title={t('Average HR')} value={`${fmtNum(metrics.averageHeartRateBpm)} bpm`} />}
+        {metrics.maxHeartRateBpm != null && <Row title={t('Max HR')} value={`${fmtNum(metrics.maxHeartRateBpm)} bpm`} />}
+        {metrics.distanceMeters != null && <Row title={t('Distance')} value={`${fmtNum(metrics.distanceMeters / distanceFactor(st))} ${speedUnitOf(st) === 'mph' ? 'mi' : 'km'}`} />}
+      </>}
+      <Button icon="chartLine" onClick={() => workoutMetricsSheet(latest)}>{t(Object.keys(metrics).length ? 'Edit workout tracker data' : 'Add workout tracker data')}</Button>
+    </div>}
     <Button variant="primary" onClick={() => { close(); nav('/home') }}>{t('Nice!')}</Button>
   </div>
 }

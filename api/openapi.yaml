@@ -3210,9 +3210,21 @@ components:
               importedAt: { type: string, format: date-time, readOnly: true }
               steps: { type: number }
               activeEnergyKcal: { type: number }
+              basalEnergyKcal: { type: number }
+              totalEnergyKcal: { type: number, description: Sum of active and basal energy when both are available. }
               exerciseMinutes: { type: number }
+              moveMinutes: { type: number }
+              standMinutes: { type: number }
+              flightsClimbed: { type: number }
+              distanceWalkingRunningMeters: { type: number }
+              distanceCyclingMeters: { type: number }
+              distanceSwimmingMeters: { type: number }
+              dietaryWaterMl: { type: number, description: Dietary water recorded in Apple Health; separate from openGym water logs. }
               bodyWeightKg: { type: number }
               restingHeartRateBpm: { type: number }
+              walkingHeartRateBpm: { type: number }
+              vo2MaxMlPerKgMin: { type: number }
+              walkingSpeedMetersPerSecond: { type: number }
               hrvSdnnMs: { type: number }
               heartRateBpm: { type: number }
               sleep:
@@ -3240,6 +3252,7 @@ components:
               endAt: { type: string, format: date-time }
               durationSeconds: { type: number }
               activeEnergyKcal: { type: number }
+              distanceMeters: { type: number }
               averageHeartRateBpm: { type: number }
               maxHeartRateBpm: { type: number }
               importedAt: { type: string, format: date-time, readOnly: true }
@@ -3288,6 +3301,16 @@ components:
         bodyweight:
           type: array
           items: { $ref: '#/components/schemas/BodyweightEntry' }
+        water:
+          type: array
+          description: User-entered water amounts in milliliters, with an id and local timestamp.
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              t: { type: number, description: Milliseconds since epoch. }
+              ml: { type: number }
+        waterGoalMl: { type: number, description: Daily water goal in milliliters. }
         customEx:
           type: array
           description: User-created exercises (id, name, muscles…).
@@ -3418,6 +3441,16 @@ components:
         name: { type: string }
         bw: { type: number, description: 'Body weight that day, in `unit`.' }
         vol: { type: number, description: Total volume (Σ weight × reps). }
+        cardioType: { type: string, description: Standalone cardio activity type; its entry uses the existing duration-and-speed cardio mode when available. }
+        manualMetrics:
+          type: object
+          description: Optional readings entered from a watch, treadmill, or bike; kept separate from Apple Health data.
+          properties:
+            activeEnergyKcal: { type: number }
+            totalEnergyKcal: { type: number }
+            averageHeartRateBpm: { type: number }
+            maxHeartRateBpm: { type: number }
+            distanceMeters: { type: number }
         prs:
           type: array
           items: { type: string }
@@ -3432,6 +3465,7 @@ components:
             endAt: { type: string, format: date-time }
             durationSeconds: { type: number }
             activeEnergyKcal: { type: number }
+            distanceMeters: { type: number }
             averageHeartRateBpm: { type: number }
             maxHeartRateBpm: { type: number }
         entries:

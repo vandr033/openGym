@@ -4,6 +4,7 @@ import { healthKitBridge } from './iosHealthKitBridge.js'
 import { normalizeHealthData, normalizeWorkouts } from './healthNormalization.js'
 
 const CACHE_FILE = 'opengym-health-cache.json'
+const log = (...args) => console.info('[HealthKit]', ...args)
 const localDay = date => new Date(`${date}T00:00:00`)
 const dateKey = date => [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('-')
 const validDate = date => /^\d{4}-\d{2}-\d{2}$/.test(date) && dateKey(localDay(date)) === date
@@ -23,28 +24,61 @@ const unavailable = () => { throw new Error('Health integration unavailable on t
 const targetKey = target => target?.server && target?.uid ? `${target.server}|${target.uid}` : null
 
 export async function healthAvailability() {
-  const bridge = await healthKitBridge()
-  return bridge ? (await bridge.availability()).available : false
+  log('Checking native availability')
+  try {
+    const bridge = await healthKitBridge()
+    if (!bridge) { log('No iOS HealthKit bridge on this platform'); return false }
+    log('Bridge resolved; invoking native availability')
+    const result = await bridge.availability()
+    log('Native availability result:', result.available)
+    return result.available
+  } catch (error) {
+    console.error('[HealthKit] Availability check failed:', error)
+    throw error
+  }
 }
 
 export async function requestHealthAccess() {
-  const bridge = await healthKitBridge()
-  if (!bridge || !(await bridge.availability()).available) unavailable()
-  await bridge.requestAccess()
-  const cache = await readHealthCache()
-  await writeJsonFile(CACHE_FILE, { ...cache, requested: true })
+  log('Permission request flow started')
+  try {
+    const bridge = await healthKitBridge()
+    if (!bridge) { log('Permission request skipped: no native bridge'); unavailable() }
+    const availability = await bridge.availability()
+    log('Availability before permission request:', availability.available)
+    if (!availability.available) unavailable()
+    log('Calling native requestAccess; iOS may not show a sheet if a choice was already made')
+    await bridge.requestAccess()
+    log('Native requestAccess completed; saving requested flag')
+    const cache = await readHealthCache()
+    await writeJsonFile(CACHE_FILE, { ...cache, requested: true })
+    log('Permission request flow completed; requested flag saved')
+  } catch (error) {
+    console.error('[HealthKit] Permission request failed:', error)
+    throw error
+  }
 }
 
 export async function readHealthCache() {
   const cache = await readJsonFile(CACHE_FILE)
-  return cache?.version === 1 ? cache : { version: 1, requested: false, summaries: {}, workouts: [], lastSync: null }
+  if (cache?.version === 1) {
+    log('Local cache loaded:', { requested: !!cache.requested, summaryDays: Object.keys(cache.summaries || {}).length, workouts: (cache.workouts || []).length })
+    return cache
+  }
+  log('No local health cache yet; using empty first-launch state')
+  return { version: 1, requested: false, summaries: {}, workouts: [], lastSync: null }
 }
 
 export async function readHealthView() {
-  if (MOBILE) return readHealthCache()
+  if (MOBILE) {
+    log('Reading on-device HealthKit cache')
+    return readHealthCache()
+  }
+  log('Reading remote health data')
   const { api } = await import('../api.js')
   const data = await api('/api/health-data')
-  return { requested: true, remote: true, summaries: Object.fromEntries((data.daily || []).map(day => [day.date, day])), workouts: data.workouts || [] }
+  const result = { requested: true, remote: true, summaries: Object.fromEntries((data.daily || []).map(day => [day.date, day])), workouts: data.workouts || [] }
+  log('Remote health data loaded:', { summaryDays: Object.keys(result.summaries).length, workouts: result.workouts.length })
+  return result
 }
 
 export const healthSyncEnabled = (cache, target) => !!targetKey(target) && cache?.syncTarget === targetKey(target)
@@ -58,20 +92,31 @@ export async function setHealthSyncEnabled(enabled, target) {
 }
 
 export async function refreshHealthRange(from, to) {
+  log('Refreshing HealthKit data for date range:', { from, to })
   const dates = range(from, to)
   const bridge = await healthKitBridge()
-  if (!bridge || !(await bridge.availability()).available) unavailable()
-  const raw = await bridge.getData(bounds(from, to))
-  const summaries = normalizeHealthData(raw, dates)
-  const workouts = normalizeWorkouts(raw.workouts, (raw.samples || []).filter(s => s.type === 'heartRate'))
-    .filter(w => dateKey(new Date(w.startAt)) >= from && dateKey(new Date(w.startAt)) <= to)
-  const cache = await readHealthCache()
-  const outside = (cache.workouts || []).filter(w => dateKey(new Date(w.startAt)) < from || dateKey(new Date(w.startAt)) > to)
-  await writeJsonFile(CACHE_FILE, {
-    ...cache, summaries: { ...cache.summaries, ...Object.fromEntries(summaries.map(s => [s.date, s])) },
-    workouts: [...workouts, ...outside], lastSync: new Date().toISOString(), lastReadFrom: from, lastReadTo: to,
-  })
-  return { summaries, workouts }
+  try {
+    if (!bridge) { log('Refresh stopped: no native bridge'); unavailable() }
+    const availability = await bridge.availability()
+    log('Availability before refresh:', availability.available)
+    if (!availability.available) unavailable()
+    const raw = await bridge.getData(bounds(from, to))
+    log('Native data received:', { stats: raw.stats?.length || 0, samples: raw.samples?.length || 0, sleepSamples: raw.sleep?.length || 0, workouts: raw.workouts?.length || 0 })
+    const summaries = normalizeHealthData(raw, dates)
+    const workouts = normalizeWorkouts(raw.workouts, (raw.samples || []).filter(s => s.type === 'heartRate'))
+      .filter(w => dateKey(new Date(w.startAt)) >= from && dateKey(new Date(w.startAt)) <= to)
+    const cache = await readHealthCache()
+    const outside = (cache.workouts || []).filter(w => dateKey(new Date(w.startAt)) < from || dateKey(new Date(w.startAt)) > to)
+    await writeJsonFile(CACHE_FILE, {
+      ...cache, summaries: { ...cache.summaries, ...Object.fromEntries(summaries.map(s => [s.date, s])) },
+      workouts: [...workouts, ...outside], lastSync: new Date().toISOString(), lastReadFrom: from, lastReadTo: to,
+    })
+    log('Refresh saved:', { summaryDays: summaries.length, daysWithValues: summaries.filter(s => Object.keys(s).some(key => key !== 'date')).length, workouts: workouts.length })
+    return { summaries, workouts }
+  } catch (error) {
+    console.error('[HealthKit] Data refresh failed:', error)
+    throw error
+  }
 }
 
 export const getHealthSummaries = async (from, to) => (await refreshHealthRange(from, to)).summaries

@@ -1,7 +1,7 @@
 import { isoOf } from '../format.js'
 
-/** @typedef {{ date: string, steps?: number, activeEnergyKcal?: number, exerciseMinutes?: number, bodyWeightKg?: number, restingHeartRateBpm?: number, hrvSdnnMs?: number, heartRateBpm?: number, sleep?: { totalMinutes: number, inBedMinutes: number, awakeMinutes: number, coreMinutes: number, deepMinutes: number, remMinutes: number, startAt?: string, endAt?: string } }} DailyHealthSummary */
-/** @typedef {{ externalId: string, source: 'apple-health', workoutType: string, startAt: string, endAt: string, durationSeconds: number, activeEnergyKcal?: number, averageHeartRateBpm?: number, maxHeartRateBpm?: number }} HealthWorkout */
+/** @typedef {{ date: string, steps?: number, activeEnergyKcal?: number, basalEnergyKcal?: number, totalEnergyKcal?: number, exerciseMinutes?: number, moveMinutes?: number, standMinutes?: number, flightsClimbed?: number, distanceWalkingRunningMeters?: number, distanceCyclingMeters?: number, distanceSwimmingMeters?: number, dietaryWaterMl?: number, bodyWeightKg?: number, restingHeartRateBpm?: number, walkingHeartRateBpm?: number, vo2MaxMlPerKgMin?: number, walkingSpeedMetersPerSecond?: number, hrvSdnnMs?: number, heartRateBpm?: number, sleep?: { totalMinutes: number, inBedMinutes: number, awakeMinutes: number, coreMinutes: number, deepMinutes: number, remMinutes: number, startAt?: string, endAt?: string } }} DailyHealthSummary */
+/** @typedef {{ externalId: string, source: 'apple-health', workoutType: string, startAt: string, endAt: string, durationSeconds: number, activeEnergyKcal?: number, distanceMeters?: number, averageHeartRateBpm?: number, maxHeartRateBpm?: number }} HealthWorkout */
 
 const dayOf = value => isoOf(new Date(value))
 const round = n => Math.round(n * 10) / 10
@@ -49,7 +49,9 @@ export function normalizeWorkouts(workouts = [], heart = []) {
       externalId: w.id, source: 'apple-health', workoutType: w.workoutType,
       startAt: w.startAt, endAt: w.endAt, durationSeconds: w.durationSeconds,
       ...(w.activeEnergyKcal != null ? { activeEnergyKcal: round(w.activeEnergyKcal) } : {}),
-      ...(rates.length ? { averageHeartRateBpm: round(rates.reduce((a, b) => a + b, 0) / rates.length), maxHeartRateBpm: Math.max(...rates) } : {}),
+      ...(w.distanceMeters != null ? { distanceMeters: round(w.distanceMeters) } : {}),
+      ...(w.averageHeartRateBpm != null || rates.length ? { averageHeartRateBpm: round(w.averageHeartRateBpm ?? rates.reduce((a, b) => a + b, 0) / rates.length) } : {}),
+      ...(w.maxHeartRateBpm != null || rates.length ? { maxHeartRateBpm: w.maxHeartRateBpm ?? Math.max(...rates) } : {}),
     }
   }).sort((a, b) => b.startAt.localeCompare(a.startAt))
 }
@@ -60,11 +62,14 @@ export function normalizeHealthData(raw, dates) {
     const row = summaries[stat.date]
     if (row && Number.isFinite(stat.value)) row[stat.type] = round(stat.value)
   }
-  for (const [type, field] of [['bodyMass', 'bodyWeightKg'], ['restingHeartRate', 'restingHeartRateBpm'], ['heartRateVariabilitySDNN', 'hrvSdnnMs'], ['heartRate', 'heartRateBpm']]) {
+  for (const [type, field] of [['bodyMass', 'bodyWeightKg'], ['restingHeartRate', 'restingHeartRateBpm'], ['walkingHeartRate', 'walkingHeartRateBpm'], ['vo2Max', 'vo2MaxMlPerKgMin'], ['walkingSpeed', 'walkingSpeedMetersPerSecond'], ['heartRateVariabilitySDNN', 'hrvSdnnMs'], ['heartRate', 'heartRateBpm']]) {
     for (const date of dates) {
       const sample = latest((raw.samples || []).filter(s => s.type === type && dayOf(s.endAt) === date))
       if (sample) summaries[date][field] = round(sample.value)
     }
+  }
+  for (const row of Object.values(summaries)) {
+    if (row.activeEnergyKcal != null && row.basalEnergyKcal != null) row.totalEnergyKcal = round(row.activeEnergyKcal + row.basalEnergyKcal)
   }
   for (const session of sleepSessions(raw.sleep || [])) {
     const date = dayOf(session.end)

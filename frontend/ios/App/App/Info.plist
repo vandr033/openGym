@@ -25,7 +25,7 @@
 	<key>NSCameraUsageDescription</key>
 	<string>Used to scan your gym membership QR code, and to take a photo or video of an exercise you add yourself.</string>
 	<key>NSHealthShareUsageDescription</key>
-	<string>openGym reads your sleep, activity, heart metrics, body weight, and workouts to show them on this device.</string>
+	<string>openGym reads your steps, calories, exercise, distance, hydration, sleep, heart metrics, body weight, and workouts to show your health data. You can enable server sync separately.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Used to record the sound of a video you take of an exercise you add yourself.</string>
 	<key>UIApplicationSceneManifest</key>

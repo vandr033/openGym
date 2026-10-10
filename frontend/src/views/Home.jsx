@@ -4,7 +4,7 @@ import { useStore } from '../store/useStore.js'
 import { effectiveRoutines, effectiveRoutineIds, nextTrainingDay, streakWeeks, lastBW, setsDoneActive } from '../lib/history.js'
 import { fmtNum, fmtDate, todayISO, isoOf, weekKey, weekStartOf, weekDayOffset, DAYS, DAYN } from '../lib/format.js'
 import { t, dateLocale } from '../lib/i18n.js'
-import { bwSheet, goalSheet, dayOverrideSheet, calendarSheet, startFlow, starterPlanSheet, bwDeltaColor, weighInsSheet } from '../sheets.jsx'
+import { bwSheet, goalSheet, dayOverrideSheet, calendarSheet, startFlow, starterPlanSheet, bwDeltaColor, weighInsSheet, waterTrackingSheet, logCardioSessionSheet } from '../sheets.jsx'
 import LineChart from '../components/LineChart.jsx'
 import Icon from '../components/Icon.jsx'
 import { Button } from '../components/ui.jsx'
@@ -22,25 +22,31 @@ export default function Home() {
   const user = useStore(s => s.user)
   const [weekOffset, setWeekOffset] = useState(0)
   const [health, setHealth] = useState(null)
+  const [healthError, setHealthError] = useState('')
   useEffect(() => {
     if (!user && !MOBILE) return
     let live = true
     const loadHealth = async () => {
-      if (MOBILE) {
-        try {
-          if (await healthAvailability() && !(await readHealthCache()).requested) {
-            await requestHealthAccess()
-            const to = todayISO()
-            await refreshHealthRange(addDays(to, -29), to)
-          }
-        } catch { /* the Recovery screen can retry if HealthKit is unavailable */ }
-      }
-      const data = await readHealthView()
-      if (live) setHealth(data)
+      const [available, data] = await Promise.all([
+        MOBILE ? healthAvailability().catch(error => { console.error('[HealthKit] Home availability failed:', error); return false }) : false,
+        readHealthView(),
+      ])
+      console.info('[HealthKit] Home health data loaded', { available, requested: !!data.requested, summaryDays: Object.keys(data.summaries || {}).length, workouts: (data.workouts || []).length })
+      if (live) setHealth({ ...data, available })
     }
-    loadHealth().catch(() => {})
+    loadHealth().catch(error => { console.error('[HealthKit] Home health load failed:', error); if (live) setHealthError(error.message) })
     return () => { live = false }
   }, [user?.id])
+
+  const connectHealth = async () => {
+    setHealthError('')
+    try {
+      await requestHealthAccess()
+      const to = todayISO()
+      await refreshHealthRange(addDays(to, -29), to)
+      setHealth({ ...(await readHealthCache()), available: true })
+    } catch (error) { console.error('[HealthKit] Home connect failed:', error); setHealthError(error.message) }
+  }
 
   const today = new Date()
   // A weekday can hold several routines. `todayRoutines` is the whole day; `routine` is the
@@ -91,6 +97,9 @@ export default function Home() {
   const bwPoints = S.bodyweight.slice(-30).map(b => ({ t: b.t || new Date(b.d).getTime(), y: b.w, d: b.d }))
   const healthToday = health?.summaries?.[todayISO()]
   const healthMessages = recoveryMessages(health?.summaries, todayISO())
+  const waterToday = (S.water || []).filter(entry => isoOf(new Date(entry.t)) === todayISO())
+  const waterMl = waterToday.reduce((sum, entry) => sum + (Number(entry.ml) || 0), 0)
+  const waterGoal = S.waterGoalMl || 2000
 
   // today's session shown right under the week strip
   const onToday = () => { if (S.active) nav('/workout'); else if (todayRoutines.length) startFlow(effectiveRoutineIds(S, todayISO())); else dayOverrideSheet(todayISO()) }
@@ -138,24 +147,39 @@ export default function Home() {
           and your other routines) is only reachable on a day with nothing planned. The one other
           way in, "Choose a different workout" on the weigh-in sheet, does not exist when the
           weigh-in is switched off. This is that door, and it starts nothing on its own. */}
-      {!S.active && <div style={{ display: 'flex', justifyContent: 'center', marginTop: 4 }}>
+      {!S.active && <div className="row" style={{ justifyContent: 'center', marginTop: 4, flexWrap: 'wrap' }}>
         <Button size="sm" variant="ghost" className="dim" icon="reset" onClick={() => nav('/workout')}>
           {t('Choose a different workout')}
+        </Button>
+        <Button size="sm" variant="ghost" className="dim" icon="figureRun" onClick={() => logCardioSessionSheet()}>
+          {t('Log cardio')}
         </Button>
       </div>}
     </div>
 
-    {health?.requested && <div className="card">
-      <div className="row between" style={{ marginBottom: 10 }}><h2 style={{ margin: 0 }}>Recovery context</h2>
-        <Button size="sm" variant="ghost" trailingIcon="chevronRight" onClick={() => nav('/health')}>Recovery</Button></div>
-      {healthToday && Object.keys(healthToday).length > 1 ? <>
+    {(MOBILE || health?.remote) && <div className="card">
+      <div className="row between" style={{ marginBottom: 10 }}><h2 style={{ margin: 0 }}>Activity &amp; recovery</h2>
+        <Button size="sm" variant="ghost" trailingIcon="chevronRight" onClick={() => nav('/health')}>Health</Button></div>
+      {!health?.requested && health?.available && <div className="row between" style={{ gap: 10 }}>
+        <div className="small dim">Connect Apple Health to see activity and workout readings here.</div>
+        <Button size="sm" variant="primary" onClick={connectHealth}>Connect</Button>
+      </div>}
+      {health?.available === false && !health?.remote && <div className="small dim">Apple Health is available on supported iPhones.</div>}
+      {health === null && <div className="small dim">Checking Apple Health…</div>}
+      {healthError && <div role="alert" className="small" style={{ color: 'var(--red)', marginTop: 8 }}>{healthError}</div>}
+      {health?.requested && healthToday && Object.keys(healthToday).length > 1 ? <>
         <div className="recovery-grid home-health-grid">
           {[
+            ['Steps', 'steps', value => value.toLocaleString()],
+            ['Active calories', 'activeEnergyKcal', value => `${value} kcal`],
+            ['Total calories', 'totalEnergyKcal', value => `${value} kcal`],
+            ['Exercise', 'exerciseMinutes', value => `${value} min`],
+            ['Move time', 'moveMinutes', value => `${value} min`],
+            ['Stand time', 'standMinutes', value => `${value} min`],
             ['Sleep', 'sleepMinutes', value => `${Math.floor(value / 60)}h ${Math.round(value % 60)}m`],
             ['HRV', 'hrvSdnnMs', value => `${value} ms`],
             ['Resting HR', 'restingHeartRateBpm', value => `${value} bpm`],
-            ['Steps', 'steps', value => value.toLocaleString()],
-            ['Bodyweight', 'bodyWeightKg', value => `${value} kg`],
+            ['Body weight', 'bodyWeightKg', value => `${value} kg`],
           ].map(([label, field, format]) => {
             const baseline = metricBaseline(health.summaries, todayISO(), field)
             return <div key={field}><span className="small dim">{label}</span><strong>{baseline.today == null ? '—' : format(baseline.today)}</strong>
@@ -165,8 +189,22 @@ export default function Home() {
         {todayRoutines.length > 0 && healthMessages.some(message => message.startsWith('Sleep duration was below') || message.startsWith('HRV is below') || message.startsWith('Resting heart rate is above')) && <div className="small dim" style={{ marginTop: 12 }}>
           {healthMessages.filter(message => message.startsWith('Sleep duration was below') || message.startsWith('HRV is below') || message.startsWith('Resting heart rate is above')).join(' ')} Consider keeping today’s planned loads rather than forcing progression. Your plan is unchanged.
         </div>}
-      </> : <div className="small dim">No health readings for today yet. Open Recovery to refresh.</div>}
+      </> : health?.requested && <div className="small dim">No health readings for today yet. Open Health to refresh.</div>}
     </div>}
+
+    <div className="card">
+      <div className="row between" style={{ marginBottom: 10 }}><h2 style={{ margin: 0 }}>Water</h2>
+        <Button size="sm" variant="ghost" trailingIcon="chevronRight" onClick={waterTrackingSheet}>Track water</Button></div>
+      <div className="row between" style={{ alignItems: 'baseline', gap: 8 }}>
+        <strong style={{ fontSize: 24 }}>{waterMl.toLocaleString()} ml</strong>
+        <span className="small dim">of {waterGoal.toLocaleString()} ml</span>
+      </div>
+      {healthToday?.dietaryWaterMl != null && <div className="small dim" style={{ marginTop: 4 }}>Apple Health: {Math.round(healthToday.dietaryWaterMl).toLocaleString()} ml</div>}
+      <div role="progressbar" aria-label={t('Water goal')} aria-valuenow={Math.min(waterMl, waterGoal)} aria-valuemin={0} aria-valuemax={waterGoal}
+        style={{ height: 6, borderRadius: 99, overflow: 'hidden', background: 'var(--surface-3)', margin: '10px 0 12px' }}>
+        <div style={{ width: `${Math.min(100, waterMl / waterGoal * 100)}%`, height: '100%', background: 'var(--teal)' }} />
+      </div>
+    </div>
 
     {activeProgram && <div className="card program-home">
       <div className="row" style={{ gap: 9, minWidth: 0 }}>

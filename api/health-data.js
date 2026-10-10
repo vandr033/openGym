@@ -1,19 +1,26 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-const dailyFields = ['steps', 'activeEnergyKcal', 'exerciseMinutes', 'bodyWeightKg', 'restingHeartRateBpm', 'hrvSdnnMs', 'heartRateBpm']
-const workoutFields = ['activeEnergyKcal', 'averageHeartRateBpm', 'maxHeartRateBpm']
+const dailyFields = ['steps', 'activeEnergyKcal', 'basalEnergyKcal', 'totalEnergyKcal', 'exerciseMinutes', 'moveMinutes', 'standMinutes', 'flightsClimbed', 'distanceWalkingRunningMeters', 'distanceCyclingMeters', 'distanceSwimmingMeters', 'dietaryWaterMl', 'bodyWeightKg', 'restingHeartRateBpm', 'walkingHeartRateBpm', 'vo2MaxMlPerKgMin', 'walkingSpeedMetersPerSecond', 'hrvSdnnMs', 'heartRateBpm']
+const workoutFields = ['activeEnergyKcal', 'distanceMeters', 'averageHeartRateBpm', 'maxHeartRateBpm']
 const sleepFields = ['totalMinutes', 'inBedMinutes', 'awakeMinutes', 'coreMinutes', 'deepMinutes', 'remMinutes']
 const object = x => !!x && typeof x === 'object' && !Array.isArray(x)
 const dateOK = x => typeof x === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(x) && !Number.isNaN(Date.parse(x + 'T12:00:00Z')) && new Date(x + 'T12:00:00Z').toISOString().slice(0, 10) === x
 const timeOK = x => typeof x === 'string' && !Number.isNaN(Date.parse(x)) && x.length <= 40
 const numberOK = (x, max) => typeof x === 'number' && Number.isFinite(x) && x >= 0 && x <= max
+const dailyMax = key => key === 'steps' ? 1000000
+  : key.endsWith('Meters') ? 100000000
+    : key === 'dietaryWaterMl' ? 100000
+      : key === 'flightsClimbed' ? 10000
+        : key === 'vo2MaxMlPerKgMin' ? 150
+          : key === 'walkingSpeedMetersPerSecond' ? 20
+            : key.endsWith('HeartRateBpm') ? 300 : 100000
 const only = (row, fields) => Object.keys(row).every(k => fields.includes(k))
 const copyNumbers = (row, fields) => Object.fromEntries(fields.filter(k => row[k] != null).map(k => [k, row[k]]))
 
 function dailyOf(row) {
   if (!object(row) || !only(row, ['date', 'source', 'importedAt', 'sleep', ...dailyFields]) || !dateOK(row.date) || row.source !== 'apple-health') return null
-  if (dailyFields.some(k => row[k] != null && !numberOK(row[k], k === 'steps' ? 1000000 : 100000))) return null
+  if (dailyFields.some(k => row[k] != null && !numberOK(row[k], dailyMax(k)))) return null
   let sleep
   if (row.sleep != null) {
     if (!object(row.sleep) || !only(row.sleep, [...sleepFields, 'startAt', 'endAt']) || sleepFields.some(k => row.sleep[k] != null && !numberOK(row.sleep[k], 1440)) ||
@@ -28,7 +35,7 @@ function workoutOf(row) {
   if (!object(row) || !only(row, ['externalId', 'source', 'workoutType', 'startAt', 'endAt', 'durationSeconds', 'importedAt', ...workoutFields]) || row.source !== 'apple-health') return null
   if (typeof row.externalId !== 'string' || !/^[0-9A-Za-z-]{1,128}$/.test(row.externalId) || typeof row.workoutType !== 'string' || !/^[0-9A-Za-z ._-]{1,80}$/.test(row.workoutType)) return null
   if (!timeOK(row.startAt) || !timeOK(row.endAt) || Date.parse(row.endAt) <= Date.parse(row.startAt) || !numberOK(row.durationSeconds, 86400)) return null
-  if (workoutFields.some(k => row[k] != null && !numberOK(row[k], 100000))) return null
+  if (workoutFields.some(k => row[k] != null && !numberOK(row[k], k === 'distanceMeters' ? 1000000 : k.endsWith('HeartRateBpm') ? 300 : 100000))) return null
   return { externalId: row.externalId, source: 'apple-health', workoutType: row.workoutType, startAt: row.startAt, endAt: row.endAt, durationSeconds: row.durationSeconds, ...copyNumbers(row, workoutFields) }
 }
 
