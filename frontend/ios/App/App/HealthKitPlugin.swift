@@ -103,26 +103,41 @@ public class HealthKitPlugin: CAPPlugin {
                             "startAt": iso.string(from: s.startDate), "endAt": iso.string(from: s.endDate)]
                 }
                 let workoutFound = try await query(HKObjectType.workoutType(), from: start, to: end)
-                let workouts = workoutFound.compactMap { object -> [String: Any]? in
-                    guard let w = object as? HKWorkout else { return nil }
+                var workouts = [[String: Any]]()
+                for object in workoutFound {
+                    guard let w = object as? HKWorkout else { continue }
                     var item: [String: Any] = ["id": w.uuid.uuidString, "workoutType": String(describing: w.workoutActivityType),
                                                "startAt": iso.string(from: w.startDate), "endAt": iso.string(from: w.endDate),
                                                "durationSeconds": w.duration]
-                    if let energyType = HKObjectType.quantityType(forIdentifier: .activeEnergyBurned),
-                       let energy = w.statistics(for: energyType)?.sumQuantity() {
-                        item["activeEnergyKcal"] = energy.doubleValue(for: .kilocalorie())
+                    if #available(iOS 16.0, *) {
+                        if let energyType = HKObjectType.quantityType(forIdentifier: .activeEnergyBurned),
+                           let energy = w.statistics(for: energyType)?.sumQuantity() {
+                            item["activeEnergyKcal"] = energy.doubleValue(for: .kilocalorie())
+                        }
+                        for id in [HKQuantityTypeIdentifier.distanceWalkingRunning, .distanceCycling, .distanceSwimming] {
+                            guard let type = HKObjectType.quantityType(forIdentifier: id),
+                                  let distance = w.statistics(for: type)?.sumQuantity() else { continue }
+                            item["distanceMeters"] = distance.doubleValue(for: .meter())
+                            break
+                        }
+                        if let heartType = HKObjectType.quantityType(forIdentifier: .heartRate), let heart = w.statistics(for: heartType) {
+                            if let average = heart.averageQuantity() { item["averageHeartRateBpm"] = average.doubleValue(for: HKUnit.count().unitDivided(by: .minute())) }
+                            if let maximum = heart.maximumQuantity() { item["maxHeartRateBpm"] = maximum.doubleValue(for: HKUnit.count().unitDivided(by: .minute())) }
+                        }
+                    } else {
+                        if let energy = w.totalEnergyBurned { item["activeEnergyKcal"] = energy.doubleValue(for: .kilocalorie()) }
+                        if let distance = w.totalDistance { item["distanceMeters"] = distance.doubleValue(for: .meter()) }
+                        if let heartType = HKObjectType.quantityType(forIdentifier: .heartRate) {
+                            let heartSamples = try await query(heartType, for: w).compactMap { $0 as? HKQuantitySample }
+                            let bpm = HKUnit.count().unitDivided(by: .minute())
+                            let values = heartSamples.map { $0.quantity.doubleValue(for: bpm) }
+                            if !values.isEmpty {
+                                item["averageHeartRateBpm"] = values.reduce(0, +) / Double(values.count)
+                                if let maximum = values.max() { item["maxHeartRateBpm"] = maximum }
+                            }
+                        }
                     }
-                    for id in [HKQuantityTypeIdentifier.distanceWalkingRunning, .distanceCycling, .distanceSwimming] {
-                        guard let type = HKObjectType.quantityType(forIdentifier: id),
-                              let distance = w.statistics(for: type)?.sumQuantity() else { continue }
-                        item["distanceMeters"] = distance.doubleValue(for: .meter())
-                        break
-                    }
-                    if let heartType = HKObjectType.quantityType(forIdentifier: .heartRate), let heart = w.statistics(for: heartType) {
-                        if let average = heart.averageQuantity() { item["averageHeartRateBpm"] = average.doubleValue(for: HKUnit.count().unitDivided(by: .minute())) }
-                        if let maximum = heart.maximumQuantity() { item["maxHeartRateBpm"] = maximum.doubleValue(for: HKUnit.count().unitDivided(by: .minute())) }
-                    }
-                    return item
+                    workouts.append(item)
                 }
                 print("[HealthKit] Native getData completed; stats=\(stats.count), samples=\(samples.count), sleep=\(sleep.count), workouts=\(workouts.count)")
                 call.resolve(["stats": stats, "samples": samples, "sleep": sleep, "workouts": workouts])
@@ -137,6 +152,17 @@ public class HealthKitPlugin: CAPPlugin {
         try await withCheckedThrowingContinuation { continuation in
             let predicate = HKQuery.predicateForSamples(withStart: from, end: to, options: [])
             let query = HKSampleQuery(sampleType: type, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
+                if let error = error { continuation.resume(throwing: error) }
+                else { continuation.resume(returning: samples ?? []) }
+            }
+            store.execute(query)
+        }
+    }
+
+    private func query(_ type: HKSampleType, for workout: HKWorkout) async throws -> [HKSample] {
+        try await withCheckedThrowingContinuation { continuation in
+            let query = HKSampleQuery(sampleType: type, predicate: HKQuery.predicateForObjects(from: workout),
+                                      limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
                 if let error = error { continuation.resume(throwing: error) }
                 else { continuation.resume(returning: samples ?? []) }
             }
