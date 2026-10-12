@@ -142,7 +142,7 @@ tags:
   - name: activity
     description: Live-workout presence heartbeat
   - name: admin
-    description: Admin dashboard — requires an admin session (`ADMIN_UIDS` or `admin:true`)
+    description: Admin dashboard and settings — requires an admin session (`ADMIN_UIDS` or `admin:true`)
   - name: media
     description: >-
       The photo, GIF or video of a user's own custom exercise, and the photos and videos
@@ -194,6 +194,9 @@ paths:
         `media` is there unless the instance runs with `MEDIA_UPLOADS=0`, for everybody: the
         caps are not a secret, and its absence is how the app knows this server does not
         store photos and videos at all.
+
+        `exercise_media` is present when an admin has imported catalog media. It maps exercise ids
+        to local API paths for saved images and GIFs.
 
         A caller with a valid session also gets a `coach` key: the block when the
         instance has the AI Coach switched on **and** a provider connected, and `null`
@@ -255,6 +258,16 @@ paths:
                       language tag the sign-in screen, and every profile that has never
                       picked a language in Settings, starts in. A profile's own choice
                       always wins; a tag the app has no translation for is ignored.
+                  exercise_media:
+                    type: object
+                    description: >-
+                      Present when media has been imported in Admin. Keys are catalog exercise
+                      ids; each value can contain an img and/or gif path to a saved local file.
+                    additionalProperties:
+                      type: object
+                      properties:
+                        img: { type: string, format: uri-reference }
+                        gif: { type: string, format: uri-reference }
                   media:
                     $ref: '#/components/schemas/MediaConfig'
               examples:
@@ -267,6 +280,94 @@ paths:
                     coach: { enabled: true, provider: compatible, providerLabel: "OpenAI-compatible endpoint", authMode: instance, community: false }
                 passwordLogin: { value: { invite_only: true, allow_guest: false, password_login: true } }
                 media: { value: { invite_only: false, allow_guest: true, media: { imageMB: 2, gifMB: 8, videoMB: 40, videoSec: 60, quotaMB: 200, workouts: true } } }
+
+  /api/admin/exercise-media:
+    post:
+      tags: [admin]
+      operationId: adminExerciseMediaImport
+      summary: 'Admin: import exercise media files'
+      description: >-
+        Downloads HTTPS image or GIF URLs for built-in exercises. The JSON entries are the same
+        rows copied by the Admin dashboard scan; blank media values are ignored. The server checks
+        the file type and size, then saves the bytes in its data directory. Clients load the local
+        copy. Audited.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [entries]
+              properties:
+                entries:
+                  type: array
+                  items:
+                    type: object
+                    required: [id]
+                    properties:
+                      id: { type: string, description: Catalog exercise id. }
+                      name: { type: string, description: Copied exercise name; ignored on import. }
+                      missing:
+                        type: array
+                        items: { type: string, enum: [img, gif] }
+                      img: { type: string, format: uri, maxLength: 2048, description: Direct HTTPS JPEG, PNG, or WebP image URL. }
+                      gif: { type: string, format: uri, maxLength: 2048, description: Direct HTTPS GIF URL. }
+            example:
+              entries:
+                - { id: '0001', name: '3/4 sit-up', missing: [img, gif], img: 'https://media.example/sit-up.jpg', gif: 'https://media.example/sit-up.gif' }
+      responses:
+        '200':
+          description: Number of media files downloaded and saved.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  updated: { type: integer, description: Number of media files saved. }
+        '400':
+          description: Invalid JSON, unsupported file type, or invalid image/GIF URL.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '413': { description: The image or GIF exceeds the configured size limit. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { description: The URL did not return the requested image or GIF type. }
+        '502': { description: The server could not download the image or GIF. }
+
+  /api/exercise-media/{id}/{kind}/{file}:
+    get:
+      tags: [media]
+      operationId: getExerciseMedia
+      summary: Load one saved built-in exercise image or GIF
+      description: >-
+        Returns a public, content-hashed file saved by the Admin exercise media importer. The
+        response is the image or GIF itself with a sniffed Content-Type, nosniff, and a one-year
+        immutable cache. HEAD is also supported for catalog scans.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[0-9A-Za-z_-]+$' }
+        - name: kind
+          in: path
+          required: true
+          schema: { type: string, enum: [img, gif] }
+        - name: file
+          in: path
+          required: true
+          description: SHA-256 and verified file extension.
+          schema: { type: string, pattern: '^[0-9a-f]{64}\.(jpg|png|webp|gif)$' }
+      responses:
+        '200':
+          description: The saved image or GIF.
+          content:
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/png: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+            image/gif: { schema: { type: string, format: binary } }
+        '404': { description: The exercise or saved file does not exist. }
 
   /api/me:
     get:

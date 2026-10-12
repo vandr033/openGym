@@ -1,6 +1,7 @@
 import { EXDB } from './exercises-data.js'
 import { USER_EXERCISE_MUSCLE_OVERRIDES, exerciseMuscleMetadataFor } from './exercise-muscle-batch-1.js'
 import { t, getVersion, exerciseNameSearchText } from './i18n-core.js'
+import { apiUrl } from './api-url.js'
 
 export { EXDB }
 
@@ -132,8 +133,9 @@ export function matchesExerciseSearch(exercise, query) {
 const ENV = import.meta.env || {}
 const IMG_BASE = ENV.VITE_IMG_BASE || 'img/'
 const GIF_BASE = ENV.VITE_GIF_BASE || 'gif/'
-export const imgSrc = ex => IMG_BASE + ex.img
-export const gifSrc = ex => GIF_BASE + ex.gif
+const mediaSrc = (base, file) => /^https:\/\//i.test(file || '') ? file : file?.startsWith('/api/exercise-media/') ? apiUrl(file) : base + file
+export const imgSrc = ex => mediaSrc(IMG_BASE, ex.img)
+export const gifSrc = ex => mediaSrc(GIF_BASE, ex.gif)
 
 // Cardio exercises log time + speed instead of weight × reps.
 export const isCardio = idOrEx => (typeof idOrEx === 'string' ? EXIDX[idOrEx] : idOrEx)?.bp === 'cardio'

@@ -48,23 +48,16 @@ Logs: `docker compose logs -f`. Stop: `docker compose down`.
 
 ### Fill missing exercise images or GIFs
 
-After the normal media download finishes, run this from the repository root with Node 22 to make
-an editable list of any catalog files missing from your instance:
+Open **Settings → Admin → Exercise media** in openGym, then choose **Scan catalog**. Copy the
+missing exercises as JSON, add a direct HTTPS URL under `img` or `gif`, save the JSON file, and
+choose **Import JSON**. The server downloads and checks each image or GIF, then saves it under
+`DATA_DIR/exercise-media`; everyone on this instance loads that local copy. Existing sessions may
+need a refresh to load the new files.
 
-```bash
-node scripts/exercise-media.mjs list > media-links.json
-```
-
-The JSON includes each exercise ID and name, the missing media types, and blank `img` / `gif`
-fields. Paste a direct HTTPS JPEG link into `img` or a direct HTTPS GIF link into `gif`, then run:
-
-```bash
-node scripts/exercise-media.mjs import media-links.json
-```
-
-The command checks the downloaded file type and size, then saves it under the catalog's existing
-filename in `media/img` or `media/gif`. The web app serves it from the same host immediately. If the
-list is empty, no catalog media files are missing. Only use media you have permission to host.
+The scan counts a file as missing when its URL returns 404 or 410. Blocked or unreachable URLs are
+shown as unverified. The server only follows public HTTPS links on port 443 and enforces the
+configured image and GIF size limits. Use direct links to image files, and only use media you have
+permission to copy.
 
 ## 2. Understand the passkey requirement (important)
 

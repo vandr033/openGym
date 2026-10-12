@@ -220,7 +220,7 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   <a class="side-link" href="#activity"><b>Activity</b><span>Live presence</span></a>
   <a class="side-link" href="#media"><b>Media</b><span>Photos &amp; videos of your exercises &amp; workouts</span></a>
   <a class="side-link" href="#coach"><b>AI Coach</b><span>Plans, reviews, debriefs</span></a>
-  <a class="side-link" href="#admin"><b>Admin</b><span>Users, invites, audit log, Coach</span></a>
+  <a class="side-link" href="#admin"><b>Admin</b><span>Users, media links, invites, audit log, Coach</span></a>
   <a class="side-link" href="#schemas"><b>Schemas</b><span>The state blob, the error shape &amp; co.</span></a>
   <p class="side-label">More</p>
   <a class="side-link" href="/"><b>Home</b><span>The tour, the demo, the download</span></a>
@@ -243,7 +243,7 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   <p class="api-facts">
     <span>OpenAPI 3.1.0</span>
     <span>openGym v1.3.9</span>
-    <span>69 endpoints</span>
+    <span>71 endpoints</span>
     <span>AGPL-3.0-or-later</span>
   </p>
 
@@ -326,6 +326,7 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   <div class="ep-body">
 <p>The flags the login screen needs before anyone is signed in. Both reflect environment variables on the server (<code>INVITE_ONLY</code>, <code>ALLOW_GUEST</code>), and so does <code>password_login</code>, which is there only when <code>PASSWORD_LOGIN=1</code>, and <code>default_lang</code>, which is there only when <code>DEFAULT_LANG</code> is set.</p>
 <p><code>media</code> is there unless the instance runs with <code>MEDIA_UPLOADS=0</code>, for everybody: the caps are not a secret, and its absence is how the app knows this server does not store photos and videos at all.</p>
+<p><code>exercise_media</code> is present when an admin has imported catalog media. It maps exercise ids to local API paths for saved images and GIFs.</p>
 <p>A caller with a valid session also gets a <code>coach</code> key: the block when the instance has the AI Coach switched on <b>and</b> a provider connected, and <code>null</code> when it has not. A caller with no session gets no key at all — the block names the provider this instance talks to, which is the same fact <code>GET /api/coach/disclosure</code> will not hand out unauthenticated.</p>
 <p>The key is always present for a session, <code>null</code> included, so a client that caches this answer can tell &quot;no Coach on this instance&quot; from &quot;you were not signed in when you asked&quot; and knows whether asking again would change it.</p>
     <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Public — no authentication required.</span></p>
@@ -335,7 +336,7 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
     <div class="ptab">
   <div class="prow rrow">
     <span class="r-code s2">200</span>
-    <span class="p-desc">Instance flags, plus the Coach block for a signed-in caller.<span class="r-sig">{ invite_only: boolean, allow_guest: boolean, coach: object | null, password_login: always true, default_lang: string, media: <a href="#schema-MediaConfig">MediaConfig</a> }</span></span>
+    <span class="p-desc">Instance flags, plus the Coach block for a signed-in caller.<span class="r-sig">{ invite_only: boolean, allow_guest: boolean, coach: object | null, password_login: always true, default_lang: string, exercise_media: object, media: <a href="#schema-MediaConfig">MediaConfig</a> }</span></span>
   </div>
     </div>
   </div>
@@ -1870,6 +1871,48 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   <p class="sub">The photo, GIF or video of a user's own custom exercise, and the photos and videos attached to a logged workout. Stored per profile (one quota for both) and named by the SHA-256 of its bytes; the state only carries a <code>MediaRef</code>. Every route here is a 404 when the instance runs with <code>MEDIA_UPLOADS=0</code>.</p>
   <div class="eps">
 
+<details class="ep" id="op-getExerciseMedia">
+  <summary>
+    <span class="m get">GET</span>
+    <span class="ep-path"><code>/api/exercise-media/{id}/{kind}/{file}</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Load one saved built-in exercise image or GIF</span>
+  </summary>
+  <div class="ep-body">
+<p>Returns a public, content-hashed file saved by the Admin exercise media importer. The response is the image or GIF itself with a sniffed Content-Type, nosniff, and a one-year immutable cache. HEAD is also supported for catalog scans.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session — the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+<p class="ep-h">Query parameters</p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">id <span class="p-hint">(path)</span><em class="p-req" title="required">required</em></span>
+    <span class="p-type">string</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">kind <span class="p-hint">(path)</span><em class="p-req" title="required">required</em></span>
+    <span class="p-type">&quot;img&quot; | &quot;gif&quot;</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">file <span class="p-hint">(path)</span><em class="p-req" title="required">required</em></span>
+    <span class="p-type">string</span>
+    <span class="p-desc">SHA-256 and verified file extension.</span>
+  </div>
+</div>
+
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">The saved image or GIF.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">The exercise or saved file does not exist.</span>
+  </div>
+    </div>
+  </div>
+</details>
+
 <details class="ep" id="op-getMedia">
   <summary>
     <span class="m get">GET</span>
@@ -2450,8 +2493,99 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
 
 <section class="api-sec" id="admin">
   <h2>Admin</h2>
-  <p class="sub">Admin dashboard — requires an admin session (<code>ADMIN_UIDS</code> or <code>admin:true</code>)</p>
+  <p class="sub">Admin dashboard and settings — requires an admin session (<code>ADMIN_UIDS</code> or <code>admin:true</code>)</p>
   <div class="eps">
+
+<details class="ep" id="op-adminExerciseMediaImport">
+  <summary>
+    <span class="m post">POST</span>
+    <span class="ep-path"><code>/api/admin/exercise-media</code><span class="ep-chip admin">admin</span></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Import exercise media files</span>
+  </summary>
+  <div class="ep-body">
+<p>Downloads HTTPS image or GIF URLs for built-in exercises. The JSON entries are the same rows copied by the Admin dashboard scan; blank media values are ignored. The server checks the file type and size, then saves the bytes in its data directory. Clients load the local copy. Audited.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Admin only — a signed-in session whose user is an admin (<code>ADMIN_UIDS</code> or <code>admin:true</code>), as the session cookie or a Bearer token.</span></p>
+
+<p class="ep-h">Request body <span class="p-hint">(JSON)</span></p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">entries<em class="p-req" title="required">required</em></span>
+    <span class="p-type">object[]</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">entries[].id<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string</span>
+    <span class="p-desc">Catalog exercise id.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">entries[].name</span>
+    <span class="p-type">string</span>
+    <span class="p-desc">Copied exercise name; ignored on import.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">entries[].missing</span>
+    <span class="p-type">(&quot;img&quot; | &quot;gif&quot;)[]</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">entries[].img</span>
+    <span class="p-type">string <span class="p-hint">(uri, &le; 2048 chars)</span></span>
+    <span class="p-desc">Direct HTTPS JPEG</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">entries[].gif</span>
+    <span class="p-type">string <span class="p-hint">(uri, &le; 2048 chars)</span></span>
+    <span class="p-desc">Direct HTTPS GIF URL.</span>
+  </div>
+</div>
+<pre><code>{
+  &quot;entries&quot;: [
+    {
+      &quot;id&quot;: &quot;0001&quot;,
+      &quot;name&quot;: &quot;3/4 sit-up&quot;,
+      &quot;missing&quot;: [
+        &quot;img&quot;,
+        &quot;gif&quot;
+      ],
+      &quot;img&quot;: &quot;https://media.example/sit-up.jpg&quot;,
+      &quot;gif&quot;: &quot;https://media.example/sit-up.gif&quot;
+    }
+  ]
+}</code></pre>
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Number of media files downloaded and saved.<span class="r-sig">{ ok: always true, updated: integer }</span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">400</span>
+    <span class="p-desc">Invalid JSON, unsupported file type, or invalid image/GIF URL.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">403</span>
+    <span class="p-desc">Signed in, but not an admin. The attempt is recorded in the audit log.<span class="r-sig"><code>{&quot;error&quot;:&quot;forbidden&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">413</span>
+    <span class="p-desc">The image or GIF exceeds the configured size limit.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">422</span>
+    <span class="p-desc">The URL did not return the requested image or GIF type.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">502</span>
+    <span class="p-desc">The server could not download the image or GIF.</span>
+  </div>
+    </div>
+  </div>
+</details>
 
 <details class="ep" id="op-adminPasswordReset">
   <summary>
@@ -3573,6 +3707,31 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
     <span class="p-desc"></span>
   </div>
   <div class="prow">
+    <span class="p-name">water</span>
+    <span class="p-type">object[]</span>
+    <span class="p-desc">User-entered water amounts in milliliters, with an id and local timestamp.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">water[].id</span>
+    <span class="p-type">string</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">water[].t</span>
+    <span class="p-type">number</span>
+    <span class="p-desc">Milliseconds since epoch.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">water[].ml</span>
+    <span class="p-type">number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">waterGoalMl</span>
+    <span class="p-type">number</span>
+    <span class="p-desc">Daily water goal in milliliters.</span>
+  </div>
+  <div class="prow">
     <span class="p-name">customEx</span>
     <span class="p-type"><a href="#schema-CustomExercise">CustomExercise</a>[]</span>
     <span class="p-desc">User-created exercises (id, name, muscles…).</span>
@@ -3919,6 +4078,41 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
     <span class="p-name">vol</span>
     <span class="p-type">number</span>
     <span class="p-desc">Total volume (Σ weight × reps).</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">cardioType</span>
+    <span class="p-type">string</span>
+    <span class="p-desc">Standalone cardio activity type; its entry uses the existing duration-and-speed cardio mode when available.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">manualMetrics</span>
+    <span class="p-type">object</span>
+    <span class="p-desc">Optional readings entered manually from a watch, treadmill, or bike.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">manualMetrics.activeEnergyKcal</span>
+    <span class="p-type">number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">manualMetrics.totalEnergyKcal</span>
+    <span class="p-type">number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">manualMetrics.averageHeartRateBpm</span>
+    <span class="p-type">number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">manualMetrics.maxHeartRateBpm</span>
+    <span class="p-type">number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">manualMetrics.distanceMeters</span>
+    <span class="p-type">number</span>
+    <span class="p-desc"></span>
   </div>
   <div class="prow">
     <span class="p-name">prs</span>

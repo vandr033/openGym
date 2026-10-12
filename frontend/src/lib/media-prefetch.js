@@ -31,7 +31,7 @@ const CONCURRENCY = 2
 const MAX_FAILURES = 3
 
 /** Every same-origin img/gif URL for the exercises in the plan and the active session. */
-export function planMediaUrls(S, base = globalThis.location?.href, index = EXIDX) {
+export function planMediaUrls(S, base = globalThis.location?.href, index = EXIDX, overrides = {}) {
   if (!base) return []
   const ids = new Set()
   ;(S?.routines || []).forEach(r => (r?.ex || []).forEach(e => { if (e?.id) ids.add(e.id) }))
@@ -39,10 +39,11 @@ export function planMediaUrls(S, base = globalThis.location?.href, index = EXIDX
   const origin = new URL(base).origin
   const urls = new Set()
   for (const id of ids) {
-    const ex = index[id]
+    const baseEx = index[id]
     // A custom exercise's photo or video is not a file of the shipped dataset: it lives in the
     // local media store and has its own prefetch (lib/media-sync.js). An unknown id has nothing.
-    if (!ex || ex.custom) continue
+    if (!baseEx || baseEx.custom) continue
+    const ex = overrides[id] ? { ...baseEx, ...overrides[id] } : baseEx
     for (const src of [ex.gif && gifSrc(ex), ex.img && imgSrc(ex)]) {
       if (!src) continue
       const u = new URL(src, base)
@@ -122,7 +123,8 @@ export function startMediaPrefetch(store, { delay = PREFETCH_DELAY_MS, win = glo
     timer = null
     // Only through a worker that is in charge of this page: without one nothing would be kept.
     if (running || !sw.controller || !allowed()) return
-    const urls = planMediaUrls(store.getState().S)
+    const state = store.getState()
+    const urls = planMediaUrls(state.S, undefined, EXIDX, state.config?.exercise_media)
     const key = urls.join('\n')
     if (!urls.length || key === done) return
     running = true
@@ -139,11 +141,12 @@ export function startMediaPrefetch(store, { delay = PREFETCH_DELAY_MS, win = glo
       else run()
     }, delay)
   }
-  let seen = store.getState().S
+  let seen = store.getState()
   const unsubscribe = store.subscribe(st => {
     const S = st.S
-    if (S?.routines === seen?.routines && S?.active === seen?.active) return
-    seen = S
+    if (S?.routines === seen.S?.routines && S?.active === seen.S?.active
+      && st.config?.exercise_media === seen.config?.exercise_media) return
+    seen = st
     schedule()
   })
   // A tab moved into the app's window becomes the installed app without a reload.

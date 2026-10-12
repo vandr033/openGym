@@ -30,7 +30,8 @@ import {
   listPasskeys, addPasskeyRecord, renamePasskeyRecord, removePasskeyRecord, passkeyRemovalRefused, MAX_PASSKEYS
 } from './passkeys-store.js';
 import { createDeviceLink, findDeviceLink, burnDeviceLink, dropDeviceLinks } from './device-link.js';
-import { createMediaStore, mediaLimits, mediaConfig, MediaError, HASH_RE } from './media.js';
+import { createMediaStore, mediaLimits, mediaConfig, MediaError, HASH_RE, sniffMedia } from './media.js';
+import { EXERCISES } from './coach/core/library-data.js';
 
 const PORT = +(process.env.PORT || 3000);
 const DATA = process.env.DATA_DIR || '/data';
@@ -71,6 +72,14 @@ const TRUST_PROXY = /^(1|true|yes|on)$/i.test(process.env.TRUST_PROXY || '');
 // baked into each cookie when it's issued, so lowering this never cuts an existing session short.
 const SESSION_DAYS = Math.max(1, +(process.env.SESSION_DAYS || 90) || 90);
 const MAX_BODY = 5 * 1024 * 1024;
+const EXERCISE_IDS = new Set(EXERCISES.map(ex => ex.id));
+function exerciseMediaUrl(value) {
+  if (typeof value !== 'string' || value.length > 2048) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && !url.username && !url.password && !url.port && !pushEndpointError(url.href) ? url.href : null;
+  } catch { return null; }
+}
 // Secure cookies require HTTPS; over plain http://localhost the flag would drop the cookie
 const SECURE = /^https:/i.test(ORIGIN) ? ' Secure;' : '';
 
@@ -100,6 +109,7 @@ try { db = JSON.parse(fs.readFileSync(dbFile, 'utf8')); } catch {}
 db.subs = db.subs || [];
 db.invites = db.invites || [];
 db.deviceLinks = db.deviceLinks || [];   // unused one-time device links, hashed (device-link.js)
+db.exerciseMedia = db.exerciseMedia && typeof db.exerciseMedia === 'object' && !Array.isArray(db.exerciseMedia) ? db.exerciseMedia : {};
 const isAdmin = user => !!user && (user.admin === true || ADMIN_UIDS.includes(user.id));
 // 0600: db.json holds passkey credential material. It used to be covered by a blanket 0700 on
 // the whole directory; now that the directory stays traversable, the file carries its own mode.
@@ -1619,6 +1629,92 @@ const passkeyRoutes = {
 const MEDIA_LIMITS = mediaLimits(process.env);
 const MEDIA_ON = MEDIA_LIMITS.enabled;
 const MEDIA = createMediaStore({ dir: path.join(DATA, 'uploads'), limits: MEDIA_LIMITS, readState });
+const EXERCISE_MEDIA_DIR = path.join(DATA, 'exercise-media');
+fs.mkdirSync(EXERCISE_MEDIA_DIR, { recursive: true });
+try {
+  for (const name of fs.readdirSync(EXERCISE_MEDIA_DIR)) {
+    if (/^\.[0-9a-f]{24}\.tmp$/.test(name)) fs.unlinkSync(path.join(EXERCISE_MEDIA_DIR, name));
+  }
+} catch (e) { console.error('exercise media: temp cleanup failed', e.message); }
+const EXERCISE_MEDIA_EXTS = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif' };
+const EXERCISE_MEDIA_PATH_RE = /^\/api\/exercise-media\/([0-9A-Za-z_-]+)\/(img|gif)\/([0-9a-f]{64})\.(jpg|png|webp|gif)$/;
+
+async function downloadExerciseMedia(raw, kind, label) {
+  let target = exerciseMediaUrl(raw);
+  if (!target) throw new HttpError(400, `${label} must be a public HTTPS URL on port 443`);
+  const maxBytes = Math.floor((kind === 'gif' ? MEDIA_LIMITS.gifMB : MEDIA_LIMITS.imageMB) * 1024 * 1024);
+  for (let redirect = 0; redirect <= 4; redirect++) {
+    let response;
+    try {
+      response = await new Promise((resolve, reject) => {
+        const request = https.get(target, {
+          agent: PUSH_AGENT, timeout: 10000,
+          headers: { Accept: 'image/gif,image/jpeg,image/png,image/webp' }
+        }, response => {
+          response.once('end', () => clearTimeout(deadline));
+          response.once('close', () => clearTimeout(deadline));
+          resolve(response);
+        });
+        const deadline = setTimeout(() => request.destroy(new Error('source timed out')), 30000);
+        deadline.unref();
+        request.on('timeout', () => request.destroy(new Error('source timed out')));
+        request.on('error', error => { clearTimeout(deadline); reject(error); });
+      });
+    } catch {
+      throw new HttpError(502, `could not reach the image source for ${label}`);
+    }
+    if ([301, 302, 303, 307, 308].includes(response.statusCode)) {
+      const location = response.headers.location;
+      response.on('error', () => {});
+      response.destroy();
+      if (!location || redirect === 4) throw new HttpError(502, `too many redirects while fetching ${label}`);
+      let next;
+      try { next = new URL(location, target).href; } catch { throw new HttpError(502, `invalid redirect while fetching ${label}`); }
+      target = exerciseMediaUrl(next);
+      if (!target) throw new HttpError(502, `redirect for ${label} must stay on public HTTPS`);
+      continue;
+    }
+    if (response.statusCode !== 200) {
+      response.destroy();
+      throw new HttpError(502, `image source returned HTTP ${response.statusCode} for ${label}`);
+    }
+    const announced = Number(response.headers['content-length']);
+    if (Number.isFinite(announced) && announced > maxBytes) {
+      response.destroy();
+      throw new HttpError(413, `${label} exceeds the ${kind === 'gif' ? MEDIA_LIMITS.gifMB : MEDIA_LIMITS.imageMB} MB media limit`);
+    }
+    const chunks = [];
+    let size = 0;
+    try {
+      for await (const chunk of response) {
+        size += chunk.length;
+        if (size > maxBytes) {
+          response.destroy();
+          throw new HttpError(413, `${label} exceeds the ${kind === 'gif' ? MEDIA_LIMITS.gifMB : MEDIA_LIMITS.imageMB} MB media limit`);
+        }
+        chunks.push(chunk);
+      }
+    } catch (error) {
+      if (error instanceof HttpError) throw error;
+      throw new HttpError(502, `image source download was interrupted for ${label}`);
+    }
+    const data = Buffer.concat(chunks);
+    const media = sniffMedia(data.subarray(0, 64));
+    const valid = media && (kind === 'gif'
+      ? media.mime === 'image/gif'
+      : ['image/jpeg', 'image/png', 'image/webp'].includes(media.mime));
+    if (!valid) throw new HttpError(422, `${label} did not return a valid ${kind === 'gif' ? 'GIF' : 'JPEG, PNG, or WebP image'}`);
+    return { data, hash: crypto.createHash('sha256').update(data).digest('hex'), ext: media.ext, mime: media.mime };
+  }
+  throw new HttpError(502, `could not download ${label}`);
+}
+function storedExerciseMediaFile(id, kind, url) {
+  const match = EXERCISE_MEDIA_PATH_RE.exec(typeof url === 'string' ? url : '');
+  return match && match[1] === id && match[2] === kind
+    ? path.join(EXERCISE_MEDIA_DIR, `${id}-${kind}-${match[3]}.${match[4]}`)
+    : null;
+}
+
 // Leftovers of uploads the previous process was receiving when it stopped.
 try { MEDIA.cleanTmp(); } catch (e) { console.error('media: boot cleanup failed', e.message); }
 // Per profile, not per address: every upload is signed in, and behind a proxy one address can be
@@ -1664,7 +1760,7 @@ if (MEDIA_ON) {
 // neuters it even if opened as a page, CORP keeps other sites from embedding it, and no-store
 // keeps a copy out of the HTTP cache — the app's own media store is the only client cache, and
 // an HTTP-cache copy would outlive the sign-out purge. No Range and no ETag: nothing asks.
-async function sendMediaFile(res, f, hash) {
+async function sendMediaFile(res, f, hash, { cacheControl = 'private, no-store', crossOrigin = 'same-origin', head = false } = {}) {
   let fd;
   try { fd = fs.openSync(f.path, 'r'); }
   catch { throw new MediaError(404, 'media-missing'); }   // swept between the lookup and here
@@ -1672,16 +1768,17 @@ async function sendMediaFile(res, f, hash) {
   res.writeHead(200, {
     'Content-Type': f.mime,
     'Content-Length': String(size),
-    'Cache-Control': 'private, no-store',
+    'Cache-Control': cacheControl,
     'X-Content-Type-Options': 'nosniff',
     'Content-Security-Policy': "default-src 'none'; sandbox",
-    'Cross-Origin-Resource-Policy': 'same-origin',
+    'Cross-Origin-Resource-Policy': crossOrigin,
     'Content-Disposition': `inline; filename="${hash}.${f.ext}"`,
     'X-Robots-Tag': 'noindex',
     // The paired phone reads the length before the body to refuse an oversized answer; it is
     // CORS-safelisted already, this only spells it out for older WebViews.
     'Access-Control-Expose-Headers': 'Content-Length'
   });
+  if (head) { fs.closeSync(fd); return res.end(); }
   try { await pipeline(fs.createReadStream(null, { fd }), res); }
   catch { res.destroy(); }   // the client went away mid-download; nothing left to answer
 }
@@ -1736,6 +1833,15 @@ const mediaRoutes = {
 const routes = {
   'GET /api/health': async (req, res) => json(res, 200, { ok: true, users: db.users.length }),
 
+  'GET /api/exercise-media/{id}/{kind}/{file}': async (req, res) => {
+    const { id, kind, hash, ext, url } = req.exerciseMedia;
+    if (!EXERCISE_IDS.has(id) || db.exerciseMedia[id]?.[kind] !== url) throw new MediaError(404, 'media-missing');
+    await sendMediaFile(res, {
+      path: path.join(EXERCISE_MEDIA_DIR, `${id}-${kind}-${hash}.${ext}`),
+      mime: EXERCISE_MEDIA_EXTS[ext], ext
+    }, hash, { cacheControl: 'public, max-age=31536000, immutable', crossOrigin: 'cross-origin', head: req.method === 'HEAD' });
+  },
+
   // Public config the login screen needs before anyone is signed in. `coach` is absent unless
   // the instance has both switched the Coach on and successfully connected a provider — the
   // single flag every piece of Coach UI hangs off, so an unconfigured instance is byte-for-byte
@@ -1764,6 +1870,7 @@ const routes = {
       // Public like the two flags above: the caps are not a secret, and the absence of the
       // block is how the app knows this server does not take photos and videos at all.
       ...(MEDIA_ON ? { media: mediaConfig(MEDIA_LIMITS) } : {}),
+      ...(Object.keys(db.exerciseMedia).length ? { exercise_media: db.exerciseMedia } : {}),
       ...(readSession(req) ? { coach: coachConfig.publicConfig() } : {})
     });
   },
@@ -2175,6 +2282,75 @@ const routes = {
   },
 
   /* ---------- admin dashboard ---------- */
+  'POST /api/admin/exercise-media': async (req, res) => {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    const body = await readBody(req);
+    if (!body || typeof body !== 'object' || Array.isArray(body)
+      || Object.keys(body).some(key => key !== 'entries')
+      || !Array.isArray(body.entries) || body.entries.length > EXERCISES.length) {
+      return json(res, 400, { error: 'entries must be a JSON array of catalog exercises' });
+    }
+    const seen = new Set(), downloads = [];
+    for (const row of body.entries) {
+      if (!row || typeof row !== 'object' || Array.isArray(row)
+        || Object.keys(row).some(key => !['id', 'name', 'missing', 'img', 'gif'].includes(key))) {
+        return json(res, 400, { error: 'each entry must contain only id, name, missing, img, and gif' });
+      }
+      if (typeof row.id !== 'string' || !EXERCISE_IDS.has(row.id)) return json(res, 400, { error: 'unknown exercise id' });
+      if (seen.has(row.id)) return json(res, 400, { error: 'duplicate exercise id' });
+      seen.add(row.id);
+      const media = {};
+      for (const kind of ['img', 'gif']) {
+        if (row[kind] == null || row[kind] === '') continue;
+        const url = exerciseMediaUrl(row[kind]);
+        if (!url) return json(res, 400, { error: `${row.id}.${kind} must be a public HTTPS URL on port 443 (max 2048 characters)` });
+        downloads.push({ id: row.id, kind, url });
+      }
+    }
+    if (!downloads.length) return json(res, 200, { ok: true, updated: 0 });
+
+    const updates = new Map(), staged = [], created = [];
+    let committed = false;
+    try {
+      for (const item of downloads) {
+        const media = await downloadExerciseMedia(item.url, item.kind, `${item.id}.${item.kind}`);
+        const url = `/api/exercise-media/${item.id}/${item.kind}/${media.hash}.${media.ext}`;
+        const file = path.join(EXERCISE_MEDIA_DIR, `${item.id}-${item.kind}-${media.hash}.${media.ext}`);
+        const tmp = path.join(EXERCISE_MEDIA_DIR, `.${crypto.randomBytes(12).toString('hex')}.tmp`);
+        staged.push({ tmp, file });
+        fs.writeFileSync(tmp, media.data, { mode: 0o600, flag: 'wx' });
+        const fields = updates.get(item.id) || {};
+        fields[item.kind] = url;
+        updates.set(item.id, fields);
+      }
+      for (const file of staged) {
+        if (fs.existsSync(file.file)) fs.unlinkSync(file.tmp);
+        else { fs.renameSync(file.tmp, file.file); created.push(file.file); }
+      }
+      const previous = db.exerciseMedia;
+      const next = { ...previous };
+      for (const [id, media] of updates) {
+        const old = next[id] && typeof next[id] === 'object' && !Array.isArray(next[id]) ? next[id] : {};
+        next[id] = { ...old, ...media };
+      }
+      db.exerciseMedia = next;
+      try { saveDb(); }
+      catch (error) { db.exerciseMedia = previous; throw error; }
+      committed = true;
+      for (const [id, media] of updates) for (const kind of Object.keys(media)) {
+        const oldFile = storedExerciseMediaFile(id, kind, previous[id]?.[kind]);
+        const newFile = storedExerciseMediaFile(id, kind, media[kind]);
+        if (oldFile && oldFile !== newFile) try { fs.unlinkSync(oldFile); } catch {}
+      }
+      audit(req, 'admin.exercise-media.update', { user: admin, msg: `${downloads.length} file(s)` });
+    } catch (error) {
+      for (const file of staged) try { fs.unlinkSync(file.tmp); } catch {}
+      if (!committed) for (const file of created) try { fs.unlinkSync(file); } catch {}
+      throw error;
+    }
+    json(res, 200, { ok: true, updated: downloads.length });
+  },
+
   // One row per user, cheap enough for a personal instance (reads each state file once).
   'GET /api/admin/users': async (req, res) => {
     if (!requireAdmin(req, res)) return;
@@ -2414,10 +2590,15 @@ const server = http.createServer(async (req, res) => {
   try { url = new URL(req.url, 'http://x'); }
   catch { return json(res, 400, { error: 'bad request' }); }
   let key = req.method + ' ' + url.pathname;
-  // The one route with a parameter in its path. Mapped onto its template key here so the table
-  // above stays a plain lookup, and so csrfOk and the catch-all see one name for every file.
+  // Parameterized routes map onto template keys here so the route table stays a plain lookup
+  // and csrfOk sees one name for every file.
   const mm = /^\/api\/media\/([0-9a-f]{64})$/.exec(url.pathname);
   if (mm) { key = req.method + ' /api/media/{hash}'; req.mediaHash = mm[1]; }
+  const em = EXERCISE_MEDIA_PATH_RE.exec(url.pathname);
+  if (em) {
+    key = (req.method === 'HEAD' ? 'GET' : req.method) + ' /api/exercise-media/{id}/{kind}/{file}';
+    req.exerciseMedia = { id: em[1], kind: em[2], hash: em[3], ext: em[4], url: url.pathname };
+  }
   const handler = routes[key];
   if (!handler) return json(res, 404, { error: 'not found' });
   if (!csrfOk(req, key)) {

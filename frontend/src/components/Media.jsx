@@ -28,8 +28,10 @@ function BuiltinMedia({ ex, id, compact, minimizable }) {
   // both, and a tap tries again — no text, so nothing new to translate.
   const [failed, setFailed] = useState(null)
   const gifSize = useStore(s => s.S.gifSize)
+  const override = useStore(s => s.config?.exercise_media?.[ex?.id])
   const update = useStore(s => s.update)
-  if (!ex.gif) return null
+  const mediaEx = override ? { ...ex, ...override } : ex
+  if (!mediaEx.gif) return null
   if (minimizable && gifSize === 'off') return null
   const mini = minimizable && gifSize === 'mini'
   const toggleSize = e => { e.stopPropagation(); update(s => { s.gifSize = mini ? 'full' : 'mini' }) }
@@ -43,7 +45,7 @@ function BuiltinMedia({ ex, id, compact, minimizable }) {
     <div className={'exmedia' + (compact ? ' compact' : '') + (mini ? ' mini' : '') + (failed === 'all' ? ' broken' : '')} id={id} onClick={onTap}>
       {failed === 'all'
         ? <div className="exmedia-x"><Icon name="dumbbell" /></div>
-        : <img decoding="async" draggable={false} src={showGif ? gifSrc(ex) : imgSrc(ex)} alt={exerciseNameFor(ex)} onError={onError} />}
+        : <img decoding="async" draggable={false} src={showGif ? gifSrc(mediaEx) : imgSrc(mediaEx)} alt={exerciseNameFor(ex)} onError={onError} />}
       {minimizable && (
         <button className="giftoggle" onClick={toggleSize}>
           <Icon name={mini ? 'expand' : 'minimize'} />{mini ? t('Expand') : t('Minimize')}
@@ -66,7 +68,9 @@ export function Thumb(p) {
   return p.ex?.custom ? <CustomThumb {...p} /> : <BuiltinThumb {...p} />
 }
 function BuiltinThumb({ ex }) {
-  const src = ex.img ? imgSrc(ex) : null
+  const override = useStore(s => s.config?.exercise_media?.[ex?.id])
+  const mediaEx = override ? { ...ex, ...override } : ex
+  const src = mediaEx.img ? imgSrc(mediaEx) : null
   const [broken, setBroken] = useState(null)
   if (!src || broken === src) return <div className="thumb thumb-x"><Icon name="dumbbell" /></div>
   return <img className="thumb" loading="lazy" decoding="async" draggable={false} src={src} alt="" onError={() => setBroken(src)} />

@@ -2,6 +2,7 @@
 import { t } from './i18n-core.js'
 import { MOBILE } from './mobile.js'
 import { appBase } from './app-base.js'
+import { apiUrl, hasRemoteApi, setApiBase } from './api-url.js'
 
 export const IS_APPLE = /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent)
 export const IS_ANDROID = /Android/.test(navigator.userAgent)
@@ -20,9 +21,8 @@ export const webauthnOK = () => typeof window.PublicKeyCredential !== 'undefined
 
 // The paired mobile app (lib/remote.js) is the only caller of these — everywhere else stays on
 // same-origin cookies, so remoteBase/remoteToken stay empty and api() behaves exactly as before.
-let remoteBase = ''
 let remoteToken = null
-export function setRemoteAuth(base, token) { remoteBase = base || ''; remoteToken = token || null }
+export function setRemoteAuth(base, token) { setApiBase(base); remoteToken = token || null }
 
 export { appBase }
 
@@ -44,12 +44,12 @@ export async function api(path, opts) {
   // server, which answers ANY path, PUT included, with index.html and a 200, so a push "landed"
   // there and the change was marked as synced while the server never saw it. status 0, not
   // undefined: this is not "offline", and the store must not show it as such.
-  if (MOBILE && !remoteBase) throw failure(t('This phone is not connected to a server.'), 'not-paired', 0)
+  if (MOBILE && !hasRemoteApi()) throw failure(t('This phone is not connected to a server.'), 'not-paired', 0)
   const headers = Object.assign({ 'Content-Type': 'application/json' }, init.headers)
   if (remoteToken) headers.Authorization = 'Bearer ' + remoteToken
   // A paired phone has an absolute base of its own; everyone else is relative to where the app
   // is served, so a subpath deployment reaches its own API instead of the proxy's root.
-  const url = remoteBase ? remoteBase + path : appBase().replace(/\/$/, '') + path
+  const url = apiUrl(path)
   const ms = timeout != null ? timeout : (init.method || 'GET').toUpperCase() === 'GET' ? TIMEOUT_GET_MS : TIMEOUT_MS
   return request(url, Object.assign({}, init, { headers }), ms)
 }
@@ -104,7 +104,7 @@ export function beacon(path, body) {
    base api() uses and carry the paired phone's Bearer token the same way (the server's CORS
    answer allows it for GET and PUT); both refuse to run on a phone without a server, like api(). */
 
-const mediaUrl = path => (remoteBase ? remoteBase + path : appBase().replace(/\/$/, '') + path)
+const mediaUrl = apiUrl
 const mediaHeaders = () => (remoteToken ? { Authorization: 'Bearer ' + remoteToken } : {})
 const notPaired = () => failure(t('This phone is not connected to a server.'), 'not-paired', 0)
 const timedOut = () => failure(t('The server did not answer in time.'), 'timeout')
@@ -118,7 +118,7 @@ const timedOut = () => failure(t('The server did not answer in time.'), 'timeout
  * Errors carry { status, code } like api()'s: the server's code on a refusal (media-missing).
  */
 export async function apiBlob(path, { expectSize, idleMs = 30000, fetchImpl = globalThis.fetch } = {}) {
-  if (MOBILE && !remoteBase) throw notPaired()
+  if (MOBILE && !hasRemoteApi()) throw notPaired()
   const max = typeof expectSize === 'number' && expectSize >= 0 ? expectSize + 1024 : Infinity
   const ctl = typeof AbortController === 'function' ? new AbortController() : null
   let timer = null
@@ -174,7 +174,7 @@ export async function apiBlob(path, { expectSize, idleMs = 30000, fetchImpl = gl
  * `idleMs` without progress; no status at all when the network failed.
  */
 export function apiUpload(path, blob, mime, { onProgress, idleMs = 60000, XHR = globalThis.XMLHttpRequest } = {}) {
-  if (MOBILE && !remoteBase) return Promise.reject(notPaired())
+  if (MOBILE && !hasRemoteApi()) return Promise.reject(notPaired())
   return new Promise((resolve, reject) => {
     const xhr = new XHR()
     let timer = null

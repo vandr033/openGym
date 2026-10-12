@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useStore } from '../store/useStore.js'
 import { useUI } from '../store/useUI.js'
 import { api } from '../lib/api.js'
+import { EXDB, imgSrc, gifSrc } from '../lib/exercises.js'
 import { fmtDate, fmtNum, fmtVol, fmtDur } from '../lib/format.js'
 import { auditCat, auditLine, fmtWhen } from '../lib/audit.js'
 import { workoutVolume, setsDone } from '../lib/history.js'
@@ -147,6 +148,108 @@ function UserDetail({ id, onChanged, close }) {
       </div>)}
     </div> : <div className="adm-empty">No workouts logged.</div>}
   </>
+}
+
+function ExerciseMediaCard() {
+  const toast = useUI(s => s.toast)
+  const config = useStore(s => s.config)
+  const refreshConfig = useStore(s => s.refreshConfig)
+  const fileInput = useRef(null)
+  const [scanning, setScanning] = useState(false)
+  const [progress, setProgress] = useState(null)
+  const [report, setReport] = useState(null)
+  const [importing, setImporting] = useState(false)
+  const overrides = config?.exercise_media || {}
+
+  const scan = async () => {
+    const jobs = EXDB.flatMap(ex => ['img', 'gif'].map(kind => {
+      const value = overrides[ex.id]?.[kind] || ex[kind]
+      return { id: ex.id, name: ex.n, kind, src: value ? (kind === 'img' ? imgSrc : gifSrc)({ ...ex, [kind]: value }) : null }
+    }))
+    const results = new Array(jobs.length)
+    let next = 0, checked = 0
+    setScanning(true); setReport(null); setProgress({ checked: 0, total: jobs.length })
+    try {
+      await Promise.all(Array.from({ length: 16 }, async () => {
+        while (next < jobs.length) {
+          const i = next++, job = jobs[i]
+          let result = 'missing'
+          if (job.src) {
+            try {
+              const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 8000)
+              let response
+              try { response = await fetch(job.src, { method: 'HEAD', cache: 'no-store', credentials: 'omit', signal: controller.signal }) }
+              finally { clearTimeout(timeout) }
+              result = response.status === 404 || response.status === 410 ? 'missing' : response.ok ? 'ok' : 'unknown'
+            } catch { result = 'unknown' }
+          }
+          results[i] = result
+          checked++
+          if (checked % 40 === 0 || checked === jobs.length) setProgress({ checked, total: jobs.length })
+        }
+      }))
+      const byId = new Map()
+      let unverified = 0
+      jobs.forEach((job, i) => {
+        if (results[i] === 'unknown') unverified++
+        if (results[i] !== 'missing') return
+        let row = byId.get(job.id)
+        if (!row) { row = { id: job.id, name: job.name, missing: [] }; byId.set(job.id, row) }
+        row.missing.push(job.kind)
+        row[job.kind] = ''
+      })
+      const rows = [...byId.values()]
+      setReport({ rows, unverified })
+    } catch (e) {
+      toast('Scan failed: ' + e.message)
+    } finally {
+      setScanning(false)
+    }
+  }
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(report.rows, null, 2))
+      toast('Copied ' + report.rows.length + ' exercises as JSON')
+    } catch { toast('Clipboard access failed. Allow clipboard access and try again.') }
+  }
+
+  const importFile = async e => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    if (file.size > 5 * 1024 * 1024) return toast('JSON file must be 5 MB or smaller')
+    setImporting(true)
+    try {
+      const entries = JSON.parse(await file.text())
+      if (!Array.isArray(entries)) throw new Error('The JSON file must contain an array of exercises.')
+      const result = await api('/api/admin/exercise-media', { method: 'POST', body: JSON.stringify({ entries }) })
+      await refreshConfig()
+      toast('Saved ' + result.updated + ' image/GIF file' + (result.updated === 1 ? '' : 's'))
+    } catch (err) { toast(err.message || 'Could not import JSON') }
+    finally { setImporting(false) }
+  }
+
+  const current = Object.values(overrides).reduce((n, media) => n + Object.keys(media || {}).length, 0)
+  const missingKinds = report?.rows.reduce((n, row) => n + row.missing.length, 0) || 0
+  return <div className="card">
+    <div className="row between"><h2 style={{ margin: 0 }}>Exercise media</h2><span className="adm-pill">{current} files saved</span></div>
+    <div className="adm-lead">Scan the catalog for missing image and GIF files, copy the results as JSON, then fill in direct HTTPS links and import the edited JSON. The server downloads and checks each file, then saves a local copy for everyone on this instance; existing sessions may need a refresh.</div>
+    <div className="row" style={{ flexWrap: 'wrap', gap: 6 }}>
+      <Button size="sm" onClick={scan} disabled={scanning}>{scanning ? 'Scanning…' : 'Scan catalog'}</Button>
+      <Button size="sm" onClick={copy} disabled={!report}>Copy JSON</Button>
+      <Button size="sm" onClick={() => fileInput.current?.click()} disabled={importing}>{importing ? 'Importing…' : 'Import JSON'}</Button>
+      <input ref={fileInput} type="file" accept=".json,application/json" onChange={importFile} style={{ display: 'none' }} />
+    </div>
+    {scanning && <div className="adm-lead" role="status" style={{ margin: '10px 0 0' }}>
+      Checking {progress?.checked || 0} of {progress?.total || 0} files. Only 404/410 responses count as missing.
+    </div>}
+    {report && <div className="adm-status" style={{ margin: '10px 0 0' }}>
+      <span>{report.rows.length} exercises · {missingKinds} missing image/GIF files</span>
+      {!!report.unverified && <span className="adm-pill warn">{report.unverified} files could not be verified</span>}
+      {!report.rows.length && <span>{report.unverified ? 'No missing files confirmed.' : 'No missing files found.'}</span>}
+    </div>}
+  </div>
 }
 
 function InvitesCard({ invites, reload, inviteOnly }) {
@@ -319,6 +422,8 @@ export default function Admin() {
     {/* The Coach setup. Renders nothing at all unless the instance offers the Coach, so an admin
         page on a box that never enabled it is byte-for-byte the page it was before. */}
     <AdminCoach />
+
+    <ExerciseMediaCard />
 
     <InvitesCard invites={invites} reload={loadInvites} inviteOnly={inviteOnly} />
 
