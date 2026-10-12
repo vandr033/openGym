@@ -110,14 +110,14 @@ const notPaired = () => failure(t('This phone is not connected to a server.'), '
 const timedOut = () => failure(t('The server did not answer in time.'), 'timeout')
 
 /**
- * GET a file as a Blob (lib/media-sync.js fetchToStore, which checks its hash before keeping it).
+ * Fetch a file as a Blob (lib/media-sync.js fetchToStore, which checks its hash before keeping it).
  * An answer that announces more than `expectSize` (+1 KB) is refused before a byte is read, and
  * one that turns out longer is cut off: a login page or a proxy's error is never read into
  * memory. There is no total time limit — a video on a slow line takes what it takes — only an
  * idle one: no bytes for `idleMs` and the download counts as offline (code 'timeout').
- * Errors carry { status, code } like api()'s: the server's code on a refusal (media-missing).
+ * POST is used by the admin's server-side URL importer; errors carry { status, code } like api()'s.
  */
-export async function apiBlob(path, { expectSize, idleMs = 30000, fetchImpl = globalThis.fetch } = {}) {
+export async function apiBlob(path, { expectSize, idleMs = 30000, method = 'GET', body, fetchImpl = globalThis.fetch } = {}) {
   if (MOBILE && !hasRemoteApi()) throw notPaired()
   const max = typeof expectSize === 'number' && expectSize >= 0 ? expectSize + 1024 : Infinity
   const ctl = typeof AbortController === 'function' ? new AbortController() : null
@@ -134,7 +134,9 @@ export async function apiBlob(path, { expectSize, idleMs = 30000, fetchImpl = gl
   const orStall = p => { p.catch(() => {}); return Promise.race([p, stall]) }
   arm()
   try {
-    const r = await orStall(fetchImpl(mediaUrl(path), { headers: mediaHeaders(), cache: 'no-store', ...(ctl ? { signal: ctl.signal } : {}) }))
+    const headers = mediaHeaders()
+    if (body != null) headers['Content-Type'] = 'application/json'
+    const r = await orStall(fetchImpl(mediaUrl(path), { method, body, headers, cache: 'no-store', ...(ctl ? { signal: ctl.signal } : {}) }))
     if (!r.ok) {
       let body = null
       try { body = await r.json() } catch { /* not JSON: a proxy's page */ }
@@ -158,7 +160,7 @@ export async function apiBlob(path, { expectSize, idleMs = 30000, fetchImpl = gl
       if (n > max) { ctl?.abort(); throw tooBig(r.status) }
       parts.push(value)
     }
-    return new Blob(parts)
+    return new Blob(parts, { type: r.headers?.get?.('content-type') || '' })
   } catch (e) {
     if (idle) throw timedOut()
     throw e

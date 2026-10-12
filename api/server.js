@@ -1642,7 +1642,8 @@ const EXERCISE_MEDIA_PATH_RE = /^\/api\/exercise-media\/([0-9A-Za-z_-]+)\/(img|g
 async function downloadExerciseMedia(raw, kind, label) {
   let target = exerciseMediaUrl(raw);
   if (!target) throw new HttpError(400, `${label} must be a public HTTPS URL on port 443`);
-  const maxBytes = Math.floor((kind === 'gif' ? MEDIA_LIMITS.gifMB : MEDIA_LIMITS.imageMB) * 1024 * 1024);
+  const maxMB = kind === 'gif' || kind === 'media' ? MEDIA_LIMITS.gifMB : MEDIA_LIMITS.imageMB;
+  const maxBytes = Math.floor(maxMB * 1024 * 1024);
   for (let redirect = 0; redirect <= 4; redirect++) {
     let response;
     try {
@@ -1681,7 +1682,7 @@ async function downloadExerciseMedia(raw, kind, label) {
     const announced = Number(response.headers['content-length']);
     if (Number.isFinite(announced) && announced > maxBytes) {
       response.destroy();
-      throw new HttpError(413, `${label} exceeds the ${kind === 'gif' ? MEDIA_LIMITS.gifMB : MEDIA_LIMITS.imageMB} MB media limit`);
+      throw new HttpError(413, `${label} exceeds the ${maxMB} MB media limit`);
     }
     const chunks = [];
     let size = 0;
@@ -1690,7 +1691,7 @@ async function downloadExerciseMedia(raw, kind, label) {
         size += chunk.length;
         if (size > maxBytes) {
           response.destroy();
-          throw new HttpError(413, `${label} exceeds the ${kind === 'gif' ? MEDIA_LIMITS.gifMB : MEDIA_LIMITS.imageMB} MB media limit`);
+          throw new HttpError(413, `${label} exceeds the ${maxMB} MB media limit`);
         }
         chunks.push(chunk);
       }
@@ -1702,8 +1703,13 @@ async function downloadExerciseMedia(raw, kind, label) {
     const media = sniffMedia(data.subarray(0, 64));
     const valid = media && (kind === 'gif'
       ? media.mime === 'image/gif'
-      : ['image/jpeg', 'image/png', 'image/webp'].includes(media.mime));
-    if (!valid) throw new HttpError(422, `${label} did not return a valid ${kind === 'gif' ? 'GIF' : 'JPEG, PNG, or WebP image'}`);
+      : kind === 'media'
+        ? ['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(media.mime)
+        : ['image/jpeg', 'image/png', 'image/webp'].includes(media.mime));
+    if (!valid) throw new HttpError(422, `${label} did not return a valid ${kind === 'gif' ? 'GIF' : kind === 'media' ? 'JPEG, PNG, WebP, or GIF image' : 'JPEG, PNG, or WebP image'}`);
+    if (kind === 'media' && data.length > Math.floor((media.mime === 'image/gif' ? MEDIA_LIMITS.gifMB : MEDIA_LIMITS.imageMB) * 1024 * 1024)) {
+      throw new HttpError(413, `${label} exceeds the ${media.mime === 'image/gif' ? MEDIA_LIMITS.gifMB : MEDIA_LIMITS.imageMB} MB media limit`);
+    }
     return { data, hash: crypto.createHash('sha256').update(data).digest('hex'), ext: media.ext, mime: media.mime };
   }
   throw new HttpError(502, `could not download ${label}`);
@@ -2349,6 +2355,18 @@ const routes = {
       throw error;
     }
     json(res, 200, { ok: true, updated: downloads.length });
+  },
+
+  'POST /api/admin/exercise-media/source': async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const body = await readBody(req);
+    if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(key => key !== 'url')) {
+      return json(res, 400, { error: 'url must be a public HTTPS image link' });
+    }
+    if (!MEDIA_ON) return json(res, 503, { error: 'This server does not store photos and videos.' });
+    const media = await downloadExerciseMedia(body.url, 'media', 'custom exercise media');
+    res.writeHead(200, { 'Content-Type': media.mime, 'Content-Length': media.data.length, 'Cache-Control': 'no-store' });
+    res.end(media.data);
   },
 
   // One row per user, cheap enough for a personal instance (reads each state file once).

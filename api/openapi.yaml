@@ -336,6 +336,40 @@ paths:
         '422': { description: The URL did not return the requested image or GIF type. }
         '502': { description: The server could not download the image or GIF. }
 
+  /api/admin/exercise-media/source:
+    post:
+      tags: [admin]
+      operationId: adminExerciseMediaSource
+      summary: 'Admin: fetch a custom exercise image or GIF'
+      description: >-
+        Downloads one public HTTPS image or GIF on behalf of an admin and returns the checked
+        bytes. The client imports the bytes into the signed-in profile's custom-exercise media
+        store, where the normal media sync uploads them to that profile's server storage.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url: { type: string, format: uri, maxLength: 2048, description: Direct HTTPS JPEG, PNG, WebP, or GIF URL. }
+      responses:
+        '200':
+          description: The checked image or GIF bytes.
+          content:
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/png: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+            image/gif: { schema: { type: string, format: binary } }
+        '400': { description: Invalid request or URL. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413': { description: The image or GIF exceeds the configured size limit. }
+        '422': { description: The URL did not return a supported image or GIF. }
+        '502': { description: The server could not download the image or GIF. }
+        '503': { description: Server-side custom media storage is disabled. }
+
   /api/exercise-media/{id}/{kind}/{file}:
     get:
       tags: [media]

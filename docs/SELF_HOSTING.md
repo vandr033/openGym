@@ -48,17 +48,20 @@ Logs: `docker compose logs -f`. Stop: `docker compose down`.
 
 ### Fill missing exercise images or GIFs
 
-Open **Settings → Admin → Exercise media** in openGym, then choose **Scan catalog**. Copy the
-missing exercises as JSON, add a direct HTTPS URL under `img` or `gif`, save the JSON file, and
-choose **Import JSON**. The server downloads and checks each image or GIF, then saves it under
-`DATA_DIR/exercise-media`; everyone on this instance loads that local copy. Existing sessions may
-need a refresh to load the new files.
+Open **Settings → Admin → Exercise media** in openGym, then choose **Scan catalog**. It scans the
+built-in catalog and the signed-in profile's custom exercises. Copy the missing exercises as JSON,
+add a direct HTTPS URL under `img` or `gif` for a built-in exercise, or `media` for a custom
+exercise, then choose **Import JSON**. Built-in media is checked and saved under
+`DATA_DIR/exercise-media` for everyone on the instance. Custom media is checked, normalized by
+the app, and synced to the signed-in profile's media store. Existing sessions may need a refresh
+to load new files.
 
 The scan counts a file as missing when its URL returns 404 or 410, or returns a successful response
 that is not an image (such as an HTML fallback page). Blocked or unreachable URLs are shown as
 unverified. The server only follows public HTTPS links on port 443 and enforces the configured
 image and GIF size limits. Use direct links to image files, and only use media you have permission
-to copy.
+to copy. A custom exercise without a photo, GIF, or video is listed with a blank `media` field; its
+imported file belongs to that profile and syncs to its devices.
 
 ## 2. Understand the passkey requirement (important)
 

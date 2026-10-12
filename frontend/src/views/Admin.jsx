@@ -2,8 +2,12 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useStore } from '../store/useStore.js'
 import { useUI } from '../store/useUI.js'
-import { api } from '../lib/api.js'
+import { api, apiBlob } from '../lib/api.js'
 import { EXDB, imgSrc, gifSrc } from '../lib/exercises.js'
+import { mediaOf } from '../lib/media-refs.js'
+import { mediaStore } from '../lib/media-store.js'
+import { syncMedia } from '../lib/media-sync.js'
+import { limitsFrom } from '../lib/media-limits.js'
 import { fmtDate, fmtNum, fmtVol, fmtDur } from '../lib/format.js'
 import { auditCat, auditLine, fmtWhen } from '../lib/audit.js'
 import { workoutVolume, setsDone } from '../lib/history.js'
@@ -153,6 +157,8 @@ function UserDetail({ id, onChanged, close }) {
 function ExerciseMediaCard() {
   const toast = useUI(s => s.toast)
   const config = useStore(s => s.config)
+  const state = useStore(s => s.S)
+  const update = useStore(s => s.update)
   const refreshConfig = useStore(s => s.refreshConfig)
   const fileInput = useRef(null)
   const [scanning, setScanning] = useState(false)
@@ -166,6 +172,7 @@ function ExerciseMediaCard() {
       const value = overrides[ex.id]?.[kind] || ex[kind]
       return { id: ex.id, name: ex.n, kind, src: value ? (kind === 'img' ? imgSrc : gifSrc)({ ...ex, [kind]: value }) : null }
     }))
+    for (const ex of state.customEx || []) jobs.push({ id: ex.id, name: ex.n, kind: 'media', present: !!mediaOf(ex) })
     const results = new Array(jobs.length)
     let next = 0, checked = 0
     setScanning(true); setReport(null); setProgress({ checked: 0, total: jobs.length })
@@ -173,8 +180,8 @@ function ExerciseMediaCard() {
       await Promise.all(Array.from({ length: 16 }, async () => {
         while (next < jobs.length) {
           const i = next++, job = jobs[i]
-          let result = 'missing'
-          if (job.src) {
+          let result = job.kind === 'media' && job.present ? 'ok' : 'missing'
+          if (job.kind !== 'media' && job.src) {
             try {
               const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 8000)
               let response
@@ -226,9 +233,53 @@ function ExerciseMediaCard() {
     try {
       const entries = JSON.parse(await file.text())
       if (!Array.isArray(entries)) throw new Error('The JSON file must contain an array of exercises.')
-      const result = await api('/api/admin/exercise-media', { method: 'POST', body: JSON.stringify({ entries }) })
-      await refreshConfig()
-      toast('Saved ' + result.updated + ' image/GIF file' + (result.updated === 1 ? '' : 's'))
+      const customIds = new Set((state.customEx || []).map(ex => ex.id))
+      const customEntries = entries.filter(row => customIds.has(row?.id) && row?.media)
+      const catalogueEntries = entries.filter(row => !customIds.has(row?.id))
+      let saved = 0
+      const prepared = []
+      if (customEntries.length) {
+        if (!config?.media) throw new Error('This server does not store custom exercise photos and GIFs.')
+        await mediaStore.ready()
+        if (!mediaStore.persistent) throw new Error('This browser cannot store custom exercise media.')
+        const allowed = new Set(['id', 'name', 'missing', 'media'])
+        const customById = new Map((state.customEx || []).map(ex => [ex.id, ex]))
+        const seen = new Set()
+        const { ingestMediaFile } = await import('../lib/media-ingest.js')
+        for (const row of customEntries) {
+          if (!row || typeof row !== 'object' || Array.isArray(row) || Object.keys(row).some(key => !allowed.has(key))) {
+            throw new Error('Custom exercise rows may contain only id, name, missing, and media.')
+          }
+          const ex = customById.get(row.id)
+          if (seen.has(row.id)) throw new Error(`Duplicate custom exercise id ${row.id}.`)
+          seen.add(row.id)
+          if (typeof row.media !== 'string' || row.media.length > 2048) throw new Error(`${ex.n}.media must be a direct HTTPS image or GIF URL.`)
+          const source = await apiBlob('/api/admin/exercise-media/source', {
+            method: 'POST', body: JSON.stringify({ url: row.media }),
+            expectSize: Math.round(config.media.gifMB * 1024 * 1024)
+          })
+          const ingested = await ingestMediaFile(source, limitsFrom(config))
+          for (const item of ingested.blobs) await mediaStore.put(item.hash, item.blob, { mime: item.mime, pending: true })
+          prepared.push({ id: ex.id, media: ingested.media })
+        }
+      }
+      if (catalogueEntries.length) {
+        const result = await api('/api/admin/exercise-media', { method: 'POST', body: JSON.stringify({ entries: catalogueEntries }) })
+        saved += result.updated
+        await refreshConfig()
+      }
+      if (prepared.length) {
+        update(s => { for (const item of prepared) { const ex = (s.customEx || []).find(row => row.id === item.id); if (ex) ex.media = item.media } })
+        await syncMedia({ force: true })
+        saved += prepared.length
+      }
+      let waiting = 0
+      for (const item of prepared) {
+        const hashes = [item.media.hash, item.media.poster?.hash].filter(Boolean)
+        const records = await Promise.all(hashes.map(hash => mediaStore.get(hash)))
+        if (records.some(record => !record || record.pending)) waiting++
+      }
+      toast('Saved ' + saved + ' image/GIF file' + (saved === 1 ? '' : 's') + (waiting ? ` · ${waiting} custom media file${waiting === 1 ? '' : 's'} still syncing` : ''))
     } catch (err) { toast(err.message || 'Could not import JSON') }
     finally { setImporting(false) }
   }
@@ -236,8 +287,8 @@ function ExerciseMediaCard() {
   const current = Object.values(overrides).reduce((n, media) => n + Object.keys(media || {}).length, 0)
   const missingKinds = report?.rows.reduce((n, row) => n + row.missing.length, 0) || 0
   return <div className="card">
-    <div className="row between"><h2 style={{ margin: 0 }}>Exercise media</h2><span className="adm-pill">{current} files saved</span></div>
-    <div className="adm-lead">Scan the catalog for missing image and GIF files, copy the results as JSON, then fill in direct HTTPS links and import the edited JSON. The server downloads and checks each file, then saves a local copy for everyone on this instance; existing sessions may need a refresh.</div>
+    <div className="row between"><h2 style={{ margin: 0 }}>Exercise media</h2><span className="adm-pill">{current} catalog files saved</span></div>
+    <div className="adm-lead">Scan the built-in catalog and your custom exercises for missing images or GIFs, copy the results as JSON, then fill in direct HTTPS links and import the edited JSON. For built-in rows, fill the img or gif field; for custom rows, fill the media field. Built-in media is saved for everyone on this instance; custom media syncs with your profile.</div>
     <div className="row" style={{ flexWrap: 'wrap', gap: 6 }}>
       <Button size="sm" onClick={scan} disabled={scanning}>{scanning ? 'Scanning…' : 'Scan catalog'}</Button>
       <Button size="sm" onClick={copy} disabled={!report}>Copy JSON</Button>
