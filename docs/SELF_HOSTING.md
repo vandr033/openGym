@@ -54,7 +54,9 @@ add a direct HTTPS URL under `img` or `gif` for a built-in exercise, or `media` 
 exercise, then choose **Import JSON**. Built-in media is checked and saved under
 `DATA_DIR/exercise-media` for everyone on the instance. Custom media is checked, normalized by
 the app, and synced to the signed-in profile's media store. Existing sessions may need a refresh
-to load new files.
+to load new files. To fill in custom exercise details, choose **Copy custom JSON** instead; it
+exports each exercise's `id` and `name`, so you can add its `bp` (body part) and `eq` (equipment)
+before importing the same file.
 
 The scan counts a file as missing when its URL returns 404 or 410, or returns a successful response
 that is not an image (such as an HTML fallback page). Blocked or unreachable URLs are shown as
