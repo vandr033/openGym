@@ -180,7 +180,10 @@ function ExerciseMediaCard() {
               let response
               try { response = await fetch(job.src, { method: 'HEAD', cache: 'no-store', credentials: 'omit', signal: controller.signal }) }
               finally { clearTimeout(timeout) }
-              result = response.status === 404 || response.status === 410 ? 'missing' : response.ok ? 'ok' : 'unknown'
+              const type = (response.headers.get('content-type') || '').split(';', 1)[0].trim().toLowerCase()
+              if (response.status === 404 || response.status === 410 || (response.ok && type && !type.startsWith('image/'))) result = 'missing'
+              else if (response.ok && type.startsWith('image/')) result = 'ok'
+              else result = 'unknown'
             } catch { result = 'unknown' }
           }
           results[i] = result
@@ -242,7 +245,7 @@ function ExerciseMediaCard() {
       <input ref={fileInput} type="file" accept=".json,application/json" onChange={importFile} style={{ display: 'none' }} />
     </div>
     {scanning && <div className="adm-lead" role="status" style={{ margin: '10px 0 0' }}>
-      Checking {progress?.checked || 0} of {progress?.total || 0} files. Only 404/410 responses count as missing.
+      Checking {progress?.checked || 0} of {progress?.total || 0} files. 404/410 and non-image responses count as missing.
     </div>}
     {report && <div className="adm-status" style={{ margin: '10px 0 0' }}>
       <span>{report.rows.length} exercises · {missingKinds} missing image/GIF files</span>

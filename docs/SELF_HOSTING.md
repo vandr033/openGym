@@ -54,10 +54,11 @@ choose **Import JSON**. The server downloads and checks each image or GIF, then 
 `DATA_DIR/exercise-media`; everyone on this instance loads that local copy. Existing sessions may
 need a refresh to load the new files.
 
-The scan counts a file as missing when its URL returns 404 or 410. Blocked or unreachable URLs are
-shown as unverified. The server only follows public HTTPS links on port 443 and enforces the
-configured image and GIF size limits. Use direct links to image files, and only use media you have
-permission to copy.
+The scan counts a file as missing when its URL returns 404 or 410, or returns a successful response
+that is not an image (such as an HTML fallback page). Blocked or unreachable URLs are shown as
+unverified. The server only follows public HTTPS links on port 443 and enforces the configured
+image and GIF size limits. Use direct links to image files, and only use media you have permission
+to copy.
 
 ## 2. Understand the passkey requirement (important)
 
