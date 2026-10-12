@@ -46,6 +46,26 @@ curl http://localhost:8080/api/health      # {"ok":true,...}
 
 Logs: `docker compose logs -f`. Stop: `docker compose down`.
 
+### Fill missing exercise images or GIFs
+
+After the normal media download finishes, run this from the repository root with Node 22 to make
+an editable list of any catalog files missing from your instance:
+
+```bash
+node scripts/exercise-media.mjs list > media-links.json
+```
+
+The JSON includes each exercise ID and name, the missing media types, and blank `img` / `gif`
+fields. Paste a direct HTTPS JPEG link into `img` or a direct HTTPS GIF link into `gif`, then run:
+
+```bash
+node scripts/exercise-media.mjs import media-links.json
+```
+
+The command checks the downloaded file type and size, then saves it under the catalog's existing
+filename in `media/img` or `media/gif`. The web app serves it from the same host immediately. If the
+list is empty, no catalog media files are missing. Only use media you have permission to host.
+
 ## 2. Understand the passkey requirement (important)
 
 openGym signs you in with **passkeys** (WebAuthn). Browsers enforce two rules:
