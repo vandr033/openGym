@@ -37,7 +37,7 @@ import { MOBILE, shareExport, printHtml } from './lib/mobile.js'
 import { speedUnitOf, toSpeed, fromSpeed, fmtSpeed } from './lib/speed.js'
 import { buildCompletedWorkout } from './lib/finish-workout.js'
 import { isWarmupRow, hasCompletedWork } from './lib/workout-model.js'
-import { saveSessionAsRoutine } from './lib/session-routines.js'
+import { applySessionRoutineChanges, saveSessionAsRoutine, sessionRoutineChanges } from './lib/session-routines.js'
 import { nextUnfinishedUnit } from './lib/supersetFlow.js'
 import { swapActiveExercise } from './lib/active-exercise-swap.js'
 import { useSheetKeyboard, useRevealActiveChip, tappable } from './lib/use-sheet-keyboard.js'
@@ -3452,11 +3452,18 @@ export function exitWorkoutEdit(onExit = () => nav('/history')) {
   </>, { kind: 'center' })
 }
 
-function FinishSummary({ w, prs, e1prs = [], close }) {
+function FinishSummary({ w, prs, e1prs = [], routineChanges, close }) {
   const st = useStore(s => s.S)
+  const [routineDecision, setRoutineDecision] = useState(false)
   const latest = st.workouts.find(x => sameWorkout(x, w)) || w
   const metrics = latest.manualMetrics || {}
   const trackedActiveSec = (latest.entries || []).reduce((sum, entry) => sum + (entry.sets || []).reduce((n, set) => n + (Number(set.activeSec) || 0), 0), 0)
+  const saveRoutineChanges = kind => {
+    update(s => applySessionRoutineChanges(s, routineChanges, kind))
+    useStore.getState().autoBackupNow()
+    setRoutineDecision(true)
+    toast(t('Routine updated for future workouts.'))
+  }
   return <div style={{ textAlign: 'center', padding: '8px 0' }}>
     <div style={{ fontSize: 44, display: 'flex', justifyContent: 'center', color: 'var(--acc)' }}><Icon name="trophy" /></div>
     <h3 style={{ margin: '8px 0' }}>{t('Workout complete!')}</h3>
@@ -3470,6 +3477,15 @@ function FinishSummary({ w, prs, e1prs = [], close }) {
     {(prs.length > 0 || e1prs.length > 0) && <div style={{ textAlign: 'start', marginBottom: 12 }}>
       {prs.map(id => <div key={id} className="small accent row" style={{ gap: 5 }}><Icon name="trophy" style={{ fontSize: 13 }} />{t('New PR:')} <span className={exerciseNameClass(EXIDX[id])}>{EXIDX[id] ? exerciseNameFor(EXIDX[id]) : id}</span></div>)}
       {e1prs.map(p => <div key={p.id} className="small accent row" style={{ gap: 5 }}><Icon name="chartLine" style={{ fontSize: 13 }} />{t('Best estimated 1RM:')} <span className={exerciseNameClass(EXIDX[p.id])}>{EXIDX[p.id] ? exerciseNameFor(EXIDX[p.id]) : p.id}</span> · {fmtNum(p.est)} {st.unit}</div>)}
+    </div>}
+    {routineChanges && !routineDecision && <div style={{ textAlign: 'start', margin: '14px 0' }}>
+      <h4 className="sec">{t('Save changes for future workouts?')}</h4>
+      <div className="small muted" style={{ marginBottom: 8 }}>{t('Routine values save reps, rep ranges and rest times. Template saves exercises and set counts.')}</div>
+      <div style={{ display: 'grid', gap: 8 }}>
+        {routineChanges.values.length > 0 && <Button icon="settings" onClick={() => saveRoutineChanges('values')}>{t('Update routine values')}</Button>}
+        {routineChanges.templates.length > 0 && <Button icon="clipboard" onClick={() => saveRoutineChanges('templates')}>{t('Update template')}</Button>}
+        <Button variant="ghost" onClick={() => setRoutineDecision(true)}>{t('Do nothing')}</Button>
+      </div>
     </div>}
     <h4 className="sec" style={{ textAlign: 'start' }}>{t('What you just trained')}</h4>
     <BodyMap load={loadOfWorkouts([w])} body={st.body} />
@@ -3526,6 +3542,7 @@ function doFinishWorkout() {
     prs,
     snapshotFor: e => EXIDX[e.id]?.custom ? exerciseMuscleSnapshot(EXIDX[e.id]) : null,
   })
+  const routineChanges = past ? null : sessionRoutineChanges(A, st.routines)
   w.vol = workoutVolume(w)
   let shown = w
   update(s => {
@@ -3550,5 +3567,5 @@ function doFinishWorkout() {
   useStore.getState().autoBackupNow()
   useUI.getState().stopRest()
   beep(snd(), 880, 0.15); beep(snd(), 1100, 0.15, 0.18); beep(snd(), 1320, 0.3, 0.36)
-  ui().openSheet(close => <FinishSummary w={shown} prs={prs} e1prs={e1prs} close={close} />, { kind: 'center', locked: true })
+  ui().openSheet(close => <FinishSummary w={shown} prs={prs} e1prs={e1prs} routineChanges={routineChanges} close={close} />, { kind: 'center', locked: true })
 }

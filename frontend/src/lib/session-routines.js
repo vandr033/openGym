@@ -124,6 +124,85 @@ function copiedEntry(entry, source) {
 
 const SESSION_ONLY = ['planned', 'plan', 'carried', 'rid', 'noProg', 'muscleSnapshot']
 
+const TEMPLATE_FIELDS = new Set(['id', 'sets', 'warmupSets', 'sg'])
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
+
+function configFromActiveEntry(entry, original) {
+  const target = entry?.target && typeof entry.target === 'object' ? entry.target : original || {}
+  const config = { ...target, id: entry?.id }
+  const planned = entry?.planned
+  if (planned) {
+    if (planned.sets != null) config.sets = planned.sets
+    if (planned.reps != null) config.reps = planned.reps
+    if (planned.repsMin != null) config.repsMin = planned.repsMin
+    else delete config.repsMin
+    if (planned.sec != null) config.sec = planned.sec
+    if (planned.weight != null) config.weight = planned.weight
+  }
+  const rows = Array.isArray(entry?.sets) ? entry.sets : []
+  const workCount = rows.filter(row => !isWarmupRow(row)).length
+  const plannedSets = Number(planned?.sets) || workCount || 1
+  const todaySets = Number(entry?.target?.sets) || plannedSets
+  // Keep automatic progression's extra sets out, while retaining sets added or removed by hand.
+  config.sets = Math.max(1, plannedSets + workCount - todaySets)
+  config.warmupSets = rows.filter(isWarmupRow).length
+  if (entry?.sg) config.sg = entry.sg
+  else delete config.sg
+  for (const key of SESSION_ONLY) delete config[key]
+  delete config.routineIndex
+  return config
+}
+
+// Build separate finish choices: routine values update existing slots; a template save also
+// applies additions, removals, order and set counts. Saved routine definitions drive every future use.
+export function sessionRoutineChanges(active, routines = []) {
+  const ids = new Set([].concat(active?.routineIds || [], active?.routineId || [], (active?.entries || []).map(entry => entry?.rid)).filter(Boolean))
+  const changes = { values: [], templates: [] }
+  for (const id of ids) {
+    const routine = routines.find(item => item?.id === id)
+    if (!routine) continue
+    const source = Array.isArray(routine.ex) ? routine.ex : []
+    const entries = (active?.entries || []).filter(entry => entry?.rid === id)
+    const used = new Set()
+    const current = entries.map(entry => {
+      let index = Number.isInteger(entry.routineIndex) ? entry.routineIndex : source.findIndex((item, i) => item?.id === entry.id && !used.has(i))
+      if (index >= 0) used.add(index)
+      else index = null
+      return { entry, index, config: configFromActiveEntry(entry, index == null ? null : source[index]) }
+    })
+    const templateChanged = current.length !== source.length || current.some(({ entry, index, config }, position) => {
+      const original = source[position]
+      return index !== position || !original || entry.id !== original.id || config.sets !== original.sets || config.warmupSets !== (original.warmupSets || 0) || !same(config.sg, original.sg)
+    })
+    const values = current.flatMap(({ entry, index, config }) => {
+      const original = index == null ? null : source[index]
+      if (!original || entry.id !== original.id) return []
+      const keys = [...new Set([...Object.keys(original), ...Object.keys(config)])]
+        .filter(key => !TEMPLATE_FIELDS.has(key) && !same(original[key], config[key]))
+      return keys.length ? [{ index, id: original.id, keys, config }] : []
+    })
+    if (values.length) changes.values.push({ id, values })
+    if (templateChanged) changes.templates.push({ id, ex: current.map(item => item.config) })
+  }
+  return changes.values.length || changes.templates.length ? changes : null
+}
+
+export function applySessionRoutineChanges(state, changes, kind) {
+  for (const change of changes?.[kind] || []) {
+    const routine = state.routines.find(item => item?.id === change.id)
+    if (!routine) continue
+    if (kind === 'templates') { routine.ex = structuredClone(change.ex); continue }
+    for (const { index, id, keys, config } of change.values) {
+      const target = routine.ex?.[index]
+      if (!target || target.id !== id) continue
+      for (const key of keys) {
+        if (Object.prototype.hasOwnProperty.call(config, key)) target[key] = structuredClone(config[key])
+        else delete target[key]
+      }
+    }
+  }
+}
+
 // `routines` are the ones the session was built from, when they still exist: the rule each copied
 // exercise is read under comes from there (see copiedEntry).
 export function routineFromSession(session, name = session?.name, routines = []) {

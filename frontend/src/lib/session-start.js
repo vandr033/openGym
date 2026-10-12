@@ -95,8 +95,9 @@ export function buildSessionEntries(st, r, { forceNoProg = false } = {}) {
   // The prescription is applied as the session is built, so you walk up to the bar with the
   // right weight already on the screen instead of being told about it afterwards.
   const noProg = forceNoProg || r?.excludeFromProgression === true
-  return (r ? r.ex : []).map(cfg => {
+  return (r ? r.ex : []).map((cfg, routineIndex) => {
     const built = buildPlannedEntry(st, cfg, r, { noProg })
-    return { id: cfg.id, sg: cfg.sg, ...built, ...(noProg ? { noProg: true } : {}) }
+    // Keep the source slot only while a workout is active, so finish-time edits survive reordering.
+    return { id: cfg.id, sg: cfg.sg, routineIndex, ...built, ...(noProg ? { noProg: true } : {}) }
   })
 }
