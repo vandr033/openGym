@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from './store/useStore.js'
 import { useUI } from './store/useUI.js'
-import { EXDB, EXIDX, BODYPARTS, isCardio, isBodyweightEq, allExercises, equipmentOf, smOf, searchExercises, exOr, isAssisted, betterWeight, beatsWeight } from './lib/exercises.js'
+import { EXDB, EXIDX, BODYPARTS, isCardio, isBodyweightEq, allExercises, equipmentOf, smOf, searchExercises, matchExercise as matchesExerciseSearch, exOr, isAssisted, betterWeight, beatsWeight } from './lib/exercises.js'
 import { activeProfile, exAvailable, ALL_EQUIPMENT, newProfile } from './lib/equipment.js'
 import { fmtDate, fmtDateRange, fmtNum, fmtPlate, exerciseNameText, fmtVol, fmtDur, durPart, todayISO, isoOf, uid, exCount, routineCount, setsWorkCount, DAYN, DAYS, weekOrder, weekStartOf, weekDayOffset, MONTHS_LONG, ACCENTS } from './lib/format.js'
 import { lastEntryFor, bestWeightFor, bestWeightForEntry, buildSets, effectiveRoutineIds, workoutDay, workoutVolume, setsDone, setsDoneActive, setUnitsTotal, lastBW, supersetUnits, sessionSections, unitOf, setLabel, defaultConfig, cleanupSg, modeOf, effortOf, EFFORT, capEffort, stepEffort, isBw, isPerSide, sideReps, workSetsDone, applyIntensifierPlan, MAX_PLANNED_WARMUPS, NOTE_MAX } from './lib/history.js'
@@ -9,7 +9,7 @@ import { usesBar, defaultBarWeight, hasBarOverride, isNoBar } from './lib/bar.js
 import { PLATE_SIZES, pairsOf, ownsPlates, withPlatePairs, withStandardPlates, withLoadKind, loadKindFor, baseWeightFor, dropGrid } from './lib/plates.js'
 import { toScale, rirOf, EFFORT_PRESETS, effortColor } from './lib/effort.js'
 import { beep, vibrate } from './lib/sound.js'
-import { t, dateLocale, instrFor, exerciseNameFor, exerciseNameClass, getLang, INSTR_LANGS } from './lib/i18n.js'
+import { t, dateLocale, instrFor, exerciseNameFor, exerciseNameClass, getLang, getVersion, INSTR_LANGS } from './lib/i18n.js'
 import { nav } from './lib/nav.js'
 import { buildStarterPlan, starterPlanDays, starterPlanOptions } from './lib/starter.js'
 import Media, { Thumb } from './components/Media.jsx'
@@ -1998,6 +1998,10 @@ function ProgramManager({ close }) {
 function RoutineImport({ close }) {
   const st = useStore(s => s.S)
   const fileRef = useRef(null)
+  const exerciseOptions = useMemo(() => allExercises(st).map(ex => ({
+    value: ex.id, label: exerciseNameText(ex), exercise: ex
+  })), [st.customEx, getVersion()])
+  const exerciseOptionById = useMemo(() => new Map(exerciseOptions.map(option => [option.value, option])), [exerciseOptions])
   const [text, setText] = useState('')
   const [parsed, setParsed] = useState(null)
   const [choices, setChoices] = useState({})
@@ -2093,12 +2097,21 @@ function RoutineImport({ close }) {
             <div className="small dim">{matchLabel(exercise.match.status)}</div>
             {exercise.match.status === 'exact'
               ? <div className="small">{exercise.match.candidates[0]?.name}</div>
-              : <select className="input routine-import-select" aria-label={t('Match for {0}', exercise.name)}
-                value={selected} onChange={event => updateChoice(key, event.target.value)}>
-                <option value="">{t('Choose a match')}</option>
-                {exercise.match.candidates.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.name}</option>)}
-                <option value="custom">{t('Create custom exercise: {0}', exercise.name)}</option>
-              </select>}
+              : <div className="routine-import-select">
+                <SelectRow title={t('Choose a match')} sheetTitle={exercise.name} value={selected}
+                  options={[
+                    ...exercise.match.candidates.map(candidate => exerciseOptionById.get(candidate.id)).filter(Boolean),
+                    ...exerciseOptions.filter(option => !exercise.match.candidates.some(candidate => candidate.id === option.value)),
+                    { value: 'custom', label: t('Create custom exercise: {0}', exercise.name) }
+                  ]}
+                  onChange={value => updateChoice(key, value)}
+                  search={{
+                    placeholder: t('Search…'), label: t('Search…'), emptyLabel: t('No match'),
+                    match: (option, query) => option.value === 'custom' || (query.trim()
+                      ? matchesExerciseSearch(option.exercise, query)
+                      : exercise.match.candidates.some(candidate => candidate.id === option.value))
+                  }} />
+              </div>}
             <div className="small dim">{exercise.config.sets} × {exercise.config.repsMin || exercise.config.reps}–{exercise.config.reps}{exercise.config.weight ? ' · ' + exercise.config.weight + ' ' + (st.unit || 'kg') : ''}</div>
             {(exercise.config.warmupSets || exercise.config.intensifier) && <div className="small dim">
               {[
