@@ -15,7 +15,7 @@ import { t, exerciseNameFor, exerciseNameClass } from '../lib/i18n.js'
 import { api, beacon } from '../lib/api.js'
 import { insertionIndexAfterCurrentUnit, nextUnfinishedUnit, setProgressHighWater, supersetFlowStep, restAfterSet, restOnRecheck, restSecFor, warmupRestSecFor } from '../lib/supersetFlow.js'
 import Media from '../components/Media.jsx'
-import { startFlow, exercisePicker, exConfigSheet, exerciseDetailSheet, finishWorkout, exitWorkoutEdit, workoutCompleteSheet, confirmSheet, exerciseNoteSheet, setNoteSheet, setDiscomfortSheet, sessionNoteSheet, renameWorkoutSheet, swapActiveWorkoutExercise, barWeightSheet, menuSheet, effortPickerSheet, exerciseHistorySheet, addRoutineToSessionSheet } from '../sheets.jsx'
+import { startFlow, exercisePicker, exConfigSheet, exerciseDetailSheet, finishWorkout, exitWorkoutEdit, workoutCompleteSheet, exerciseCompleteSheet, confirmSheet, exerciseNoteSheet, setNoteSheet, setDiscomfortSheet, sessionNoteSheet, renameWorkoutSheet, swapActiveWorkoutExercise, barWeightSheet, menuSheet, effortPickerSheet, exerciseHistorySheet, addRoutineToSessionSheet } from '../sheets.jsx'
 import { effortColor } from '../lib/effort.js'
 import Icon from '../components/Icon.jsx'
 import { Button, Check, NumberField } from '../components/ui.jsx'
@@ -92,7 +92,7 @@ const RTL_LETTER = /[֐-ࣿיִ-﷿ﹰ-﻿]/
 // "last time" recap and the progression line — leaving the name, the ⋯ menu, the one-line plan
 // the rows are measured against, and the sets.
 // Nothing dropped is lost: it is all still on the ⋯ menu, or one ⋮ switch back to list/cards.
-function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSide, onField, onAddSet, onRemoveSet, onAddWarmup, onRemoveSetAt, onStartTimed, onPairPrev, onPairNext, onSetRowRef, onProgressionSettings, onNoProg, onSwap, onMoveUp, onMoveDown, canMoveUp, canMoveDown, onRemoveExercise, busy }) {
+function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSide, onField, onAddSet, onRemoveSet, onAddWarmup, onRemoveSetAt, onStartTimed, onStartSet, onPairPrev, onPairNext, onSetRowRef, onProgressionSettings, onNoProg, onSwap, onMoveUp, onMoveDown, canMoveUp, canMoveDown, onRemoveExercise, busy }) {
   const S = useStore(s => s.S)
   const update = useStore(s => s.update)
   const working = useUI(s => s.work)
@@ -403,6 +403,7 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
       items: [
         { icon: 'note', label: s.note ? t('Edit set note') : t('Add set note'), sub: s.note || undefined, onClick: () => setNoteSheet(entryIdx, i) },
         { icon: 'warning', label: s.discomfort ? t('Edit discomfort') : t('Log discomfort'), sub: s.discomfort ? t(s.discomfort.severity) : undefined, onClick: () => setDiscomfortSheet(entryIdx, i) },
+        !warm && mode !== 'time' && { icon: 'play', label: s.startedAt ? t('Restart set timing') : t('Start set'), sub: s.startedAt ? t('Time is saved when you mark this set done.') : undefined, disabled: s.done || editing || !!S.active.backfill, onClick: () => onStartSet(i) },
         !warm && mode === 'reps' && !isRestPauseSet(s) && { icon: 'arrowDown', label: t('Drop set'), sub: t('+ Drop'), onClick: () => addDropRow(i) },
         !warm && mode === 'reps' && !isDropSet(s) && { icon: 'bolt', label: t('Rest-pause burst'), sub: t('+ Burst'), onClick: () => addBurstRow(i) },
         { icon: 'trash', label: t('Remove this set'), danger: true, disabled: !editing && entry.sets.length <= 1, onClick: () => onRemoveSetAt(i) },
@@ -908,6 +909,7 @@ function ActiveWorkout() {
     onAddWarmup: () => addWarmup(idx),
     onRemoveSetAt: i => removeSetAt(idx, i),
     onStartTimed: i => startTimed(idx, i),
+    onStartSet: i => startSetClock(idx, i),
     onProgressionSettings: editing ? null : () => openProgressionSettings(idx),
     onNoProg: routineKeepsOut(A.entries[idx]) ? null : on => setNoProg(idx, on),
   })
@@ -1099,6 +1101,16 @@ function ActiveWorkout() {
     })
   }
 
+  // Rep and cardio sets have no countdown, but their elapsed work can still be recorded apart
+  // from the workout's rest-inclusive duration.
+  const startSetClock = (idx, i) => {
+    if (editing || A.backfill) return
+    update(s => {
+      const row = s.active?.entries[idx]?.sets[i]
+      if (row && !row.done) row.startedAt = Date.now()
+    }, true)
+  }
+
   // `quiet`: the hold that ticks this set has just ended with the chime and its buzz pattern
   // (store/useUI.js). The tick's own beep would sound over the chime's first note and clip it,
   // and its short buzz would cut the pattern off: a new vibrate call replaces the running one.
@@ -1110,7 +1122,7 @@ function ActiveWorkout() {
     if (typeof document !== 'undefined') { const a = document.activeElement; if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA')) a.blur?.() }
     const m = modeAt(idx)
     const cardioEntry = m === 'cardio'
-    let exJustDone = false, workoutDone = false, checked = false
+    let exJustDone = false, checked = false
     update(s => {
       const e = s.active.entries[idx]
       // A per-side tick flips just that side; the row's own `done` (both sides) is then
@@ -1118,16 +1130,15 @@ function ActiveWorkout() {
       if (side) e.sets[i] = toggleSide(e.sets[i], side)
       else e.sets[i].done = !e.sets[i].done
       checked = e.sets[i].done
+      if (!checked) delete e.sets[i].activeSec
+      else if (e.sets[i].startedAt != null) {
+        e.sets[i].activeSec = Math.max(1, Math.round((Date.now() - e.sets[i].startedAt) / 1000))
+        delete e.sets[i].startedAt
+      }
       // A finished row has no use for a plan set aside by a hold that did not finish.
       if (checked && e.sets[i].planSec != null) delete e.sets[i].planSec
       if (e.sets[i].done && !editing) {
         if (!quiet) { beep(S.sound, 1040, 0.12); vibrate(30) }
-        // The unit that owns the ticked set — not the marked one. Since !92 the marker no longer
-        // follows a finished exercise, and in list mode any exercise can be worked on, so judging
-        // the marker's unit here declared the workout complete after one set elsewhere.
-        const ownUnit = unitOf(units, idx)
-        const unitDone = ownUnit.every(ui => (ui === idx ? e : A.entries[ui]).sets.every(x => x.done))
-        if (unitDone) workoutDone = !nextUnfinishedUnit(A.entries, supersetUnits(A.entries), idx)
         if (e.sets.every(x => x.done)) {
           exJustDone = true
           // topW is captured now; exWeights only at the finish (doFinishWorkout), so a typo you
@@ -1137,9 +1148,6 @@ function ActiveWorkout() {
       }
     }, true)
     if (editing) return
-    if (workoutDone) workoutCompleteSheet()
-    else if (exJustDone && cardioEntry) useUI.getState().toast(t('Cardio logged'))
-    else if (exJustDone && m === 'time') useUI.getState().toast(t('Hold logged'))
 
     // Only progress beyond this exercise's high-water mark may navigate or change rest. This
     // prevents an uncheck/re-check of finished work from replaying the flow side effects.
@@ -1172,6 +1180,13 @@ function ActiveWorkout() {
         const rest = useUI.getState().timer
         if (!restBeforeWarmup && restOnRecheck({ timerRunning: !!(rest && !rest.ready), unitDone: freshUnitDone, lastUnit: freshWorkoutDone })) startRest(restAfter, idx)
         return
+      }
+
+      if (exJustDone) {
+        if (!freshWorkoutDone && cardioEntry) useUI.getState().toast(t('Cardio logged'))
+        else if (!freshWorkoutDone && m === 'time') useUI.getState().toast(t('Hold logged'))
+        if (freshWorkoutDone) workoutCompleteSheet(idx)
+        else exerciseCompleteSheet(idx)
       }
 
       // Singleton units are ordinary exercises: they rest between sets and after the closing

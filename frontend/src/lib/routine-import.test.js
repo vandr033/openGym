@@ -22,7 +22,23 @@ describe('ChatGPT-friendly routine JSON', () => {
     expect(parsed.routines[0].exercises[0].config).toMatchObject({
       sets: 3, reps: 12, repsMin: 8, weight: 30, restSec: 180, prog: 'double', inc: 2, note: '2 RIR, controlled eccentric'
     })
+    expect(parsed.routines[0].exercises[2].config).toMatchObject({ sets: 3, mode: 'time', sec: 45, restSec: 60, prog: 'time', inc: 5 })
     expect(parsed.routines[2].deload).toBe(true)
+  })
+
+  it('imports timed holds in seconds without rep fields and rejects mixed prescriptions', () => {
+    const data = source()
+    data.routines[0].exercises[0] = {
+      exercise: 'Plank', mode: 'time', sets: 2, durationSeconds: 30,
+      progression: { type: 'time', step: 10 }
+    }
+    const config = parseRoutineImport(data).routines[0].exercises[0].config
+    expect(config).toEqual({ sets: 2, mode: 'time', sec: 30, prog: 'time', inc: 10 })
+    data.routines[0].exercises[0].repRange = { min: 8, max: 12 }
+    expect(() => parseRoutineImport(data)).toThrow('not reps or repRange')
+    delete data.routines[0].exercises[0].repRange
+    delete data.routines[0].exercises[0].durationSeconds
+    expect(() => parseRoutineImport(data)).toThrow('need durationSeconds')
   })
 
   it('converts load and progression step to the profile unit', () => {

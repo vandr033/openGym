@@ -37,6 +37,15 @@ The stable format identifier is `opengym-routine-v1`. Its shape is:
           "restSeconds": 180,
           "progression": { "type": "double", "step": 2 },
           "notes": "2 RIR, controlled eccentric"
+        },
+        {
+          "exercise": "Plank",
+          "mode": "time",
+          "sets": 3,
+          "durationSeconds": 45,
+          "restSeconds": 60,
+          "progression": { "type": "time", "step": 5 },
+          "notes": "Keep a straight line from head to heels"
         }
       ]
     },
@@ -69,13 +78,15 @@ exercises. There can be 1–16 routines. Exercise values are:
 |---|---|
 | `exercise` | Conventional library name, or a name for a new custom exercise |
 | `sets` | Number of planned sets; defaults to 3 |
-| `repRange` | `{ "min": 8, "max": 12 }`; `reps` can be used for one fixed target |
+| `mode` | Optional `"time"` for a timed hold; otherwise exercises use reps |
+| `repRange` | Rep exercises only: `{ "min": 8, "max": 12 }`; `reps` can be used for one fixed target |
+| `durationSeconds` | Timed holds only: integer from 5–3600; do not also provide `repRange` or `reps` |
 | `weight` | Optional starting load |
 | `weightUnit` | `kg` or `lb`; if omitted, the profile's current unit is used |
 | `warmupSets` | Optional integer from 0–5; adds ramp-up sets before work, excluded from volume, records and progression |
 | `restSeconds` | Optional rest duration from 1 to 3600 seconds |
-| `progression` | `double`, `linear`, `greyskull`, or `off`; `step` is the load increment |
-| `intensifier` | Optional `{"type":"dropset","count":2,"pct":20}` or `{"type":"restpause","totalReps":12,"restSec":15}`; details below |
+| `progression` | Rep exercises: `double`, `linear`, `greyskull`, or `off`; timed holds: `time` or `off`. `step` is the load increment for reps or seconds for timed holds |
+| `intensifier` | Rep exercises only: optional `{"type":"dropset","count":2,"pct":20}` or `{"type":"restpause","totalReps":12,"restSec":15}`; details below |
 | `notes` | Optional plain-text exercise note |
 | routine `deload` | `true` excludes the routine's exercises from normal progression |
 
@@ -93,7 +104,9 @@ For example, this is a prompt you can paste into ChatGPT:
 
 > Create a gym routine using the openGym JSON format below. Return only valid JSON. Do not include
 > Markdown or internal exercise IDs. Use conventional exercise names. Include sets, rep ranges,
-> rest times, progression type, progression step and notes where appropriate. `warmupSets` (0–5)
+> rest times, progression type, progression step and notes where appropriate. Timed holds use
+> `mode: "time"` and `durationSeconds` (5–3600), with no reps or rep range; their progression is
+> `time` or `off`, and progression steps are seconds. `warmupSets` (0–5)
 > adds ramp-up sets before work; they do not count as work, volume, records or progression. A
 > drop-set uses `intensifier: {"type":"dropset","count":2,"pct":20}` (`count` 1–30, `pct` 5–90)
 > and adds that many no-rest, progressively lighter drops to every work set. Rest-pause uses

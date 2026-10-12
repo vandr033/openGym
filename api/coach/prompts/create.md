@@ -38,6 +38,15 @@ Design a complete plan from `coachProfile` (their intake answers) and, if presen
           "repsMin": 8,
           "sg": "a",
           "why": "<1-2 sentences naming why this exercise, here, at this prescription>"
+        },
+        {
+          "id": "<library id>",
+          "sets": 3,
+          "mode": "time",
+          "sec": 45,
+          "prog": "time",
+          "inc": 5,
+          "why": "<1-2 sentences naming why this timed hold, here, at this prescription>"
         }
       ]
     }
@@ -48,6 +57,6 @@ Design a complete plan from `coachProfile` (their intake answers) and, if presen
 
 - `week` keys are weekday numbers as strings, values are `routines[].id` from this same answer.
 - `mode` is `reps` (use `reps`), `time` (use `sec`), or `cardio` (use `min` and `speed`).
-- `prog` on a routine is its default; on an exercise it overrides. `inc` is the load step in `meta.unit`; `repsMin` only matters for `double`.
+- `prog` on a routine is its default; on an exercise it overrides. `inc` is the load step in `meta.unit` for rep exercises and seconds for timed holds; `repsMin` only matters for `double`.
 - `sg`: give two exercises the same short string to superset them. They must be adjacent in the list.
 - `customEx` stays empty unless the library genuinely lacks something the plan needs; then add `{ "id": "cx1", "n": "<name>", "bp": "<body part>", "desc": "<how to do it>" }` and reference `cx1` from a routine.

@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createRoot } from 'react-dom/client'
 import { DEF, useStore } from './store/useStore.js'
 import { useUI } from './store/useUI.js'
-import { workoutDetailSheet } from './sheets.jsx'
+import { workoutCompleteSheet, workoutDetailSheet } from './sheets.jsx'
 import { EXDB } from './lib/exercises-data.js'
 
 const lifts = EXDB.filter(e => e.bp !== 'cardio' && e.eq === 'barbell').slice(0, 3).map(e => e.id)
@@ -47,6 +47,33 @@ afterEach(() => {
 })
 
 describe('workout detail', () => {
+  it('shows exercise completion stats and saves an optional feel check-in', () => {
+    useStore.setState(s => ({ S: { ...s.S, active: { entries: [{
+      id: lifts[0], feeling: undefined, target: { mode: 'reps', reps: 8 },
+      sets: [done(60, 8, { activeSec: 45 })],
+    }] } } }))
+    workoutCompleteSheet(0)
+    const host = mountTopSheet()
+    expect(host.textContent).toContain('Exercise complete')
+    expect(host.textContent).toContain('Volume')
+    expect(host.textContent).toContain('Tracked active time')
+    const aboutRight = host.querySelector('button[aria-label="3: About right"]')
+    expect(aboutRight.getAttribute('aria-pressed')).toBe('false')
+    act(() => { aboutRight.click() })
+    expect(useStore.getState().S.active.entries[0].feeling).toBe(3)
+    expect(host.querySelector('button[aria-label="3: About right"]').getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('shows the longest hold on a timed exercise completion', () => {
+    useStore.setState(s => ({ S: { ...s.S, active: { entries: [{
+      id: lifts[0], target: { mode: 'time' }, sets: [done(0, undefined, { sec: 45 })],
+    }] } } }))
+    workoutCompleteSheet(0)
+    const host = mountTopSheet()
+    expect(host.textContent).toContain('Longest hold')
+    expect(host.textContent).toContain('0:45')
+  })
+
   it('lists a drop-set\'s drops and a rest-pause set\'s bursts', () => {
     workoutDetailSheet(workout([
       { id: lifts[0], target: { mode: 'reps' }, sets: [done(100, 8, { type: 'dropset', drops: [{ w: 80, r: 6 }, { w: 60, r: 5 }] })] },

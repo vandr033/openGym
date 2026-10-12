@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => {
     confirmSheet: vi.fn(),
     topWeightSheet: vi.fn(),
     workoutCompleteSheet: vi.fn(),
+    exerciseCompleteSheet: vi.fn(),
     exercisePicker: vi.fn(),
     exConfigSheet: vi.fn(),
     toast: vi.fn(),
@@ -77,6 +78,7 @@ vi.mock('../sheets.jsx', () => ({
   finishWorkout: vi.fn(),
   exitWorkoutEdit: vi.fn(),
   workoutCompleteSheet: mocks.workoutCompleteSheet,
+  exerciseCompleteSheet: mocks.exerciseCompleteSheet,
   confirmSheet: mocks.confirmSheet,
   swapActiveWorkoutExercise: mocks.swapActiveWorkoutExercise,
   menuSheet: mocks.menuSheet,
@@ -243,6 +245,25 @@ it('edits a saved set without running live completion, rest or success feedback'
   const more = container.querySelector('button[aria-label="More"]')
   await act(async () => { more.dispatchEvent(new dom.Event('click', { bubbles: true })) })
   expect(mocks.menuSheet.mock.calls.at(-1)[0].items.filter(Boolean).map(item => item.label)).not.toContain('Progression settings')
+})
+
+it('tracks elapsed active time for a rep set started from its set menu', async () => {
+  let now = 100000
+  const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+  try {
+    await mount([exercise('plain-bench', [false])])
+    const number = container.querySelector('button[aria-label="Set 1"]')
+    await act(async () => { number.dispatchEvent(new dom.Event('click', { bubbles: true })) })
+    const menu = mocks.menuSheet.mock.calls.at(-1)[0]
+    await act(async () => { menu.items.find(item => item?.label === 'Start set').onClick() })
+    expect(mocks.S.active.entries[0].sets[0].startedAt).toBe(100000)
+    now = 104000
+    await toggleSet(0)
+    expect(mocks.S.active.entries[0].sets[0]).toMatchObject({ done: true, activeSec: 4 })
+    expect(mocks.S.active.entries[0].sets[0].startedAt).toBeUndefined()
+  } finally {
+    clock.mockRestore()
+  }
 })
 
 afterEach(async () => {
@@ -1767,7 +1788,7 @@ describe('workout controls: the more menu and the set menu', () => {
     await mount([exercise('plain-bench', [false, false])])
     await act(async () => { container.querySelector('button[aria-label="Set 2"]').dispatchEvent(new dom.Event('click', { bubbles: true })) })
     expect(lastMenu().items.filter(Boolean).map(it => it.label)).toEqual([
-      'Add set note', 'Log discomfort', 'Drop set', 'Rest-pause burst', 'Remove this set',
+      'Add set note', 'Log discomfort', 'Start set', 'Drop set', 'Rest-pause burst', 'Remove this set',
     ])
 
     await act(async () => { item('Drop set').onClick() })

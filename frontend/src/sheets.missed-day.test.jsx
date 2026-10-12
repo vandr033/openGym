@@ -1,7 +1,5 @@
 // @vitest-environment happy-dom
-// #284: "I forgot to check in, so it appears later in the history as a missed day." A planned day
-// in the past with nothing logged offers to log it, from the week strip and the calendar (both
-// open the day sheet), and what gets logged is built like any session of that plan.
+// Date selection opens the day's plan and history, and offers a logger for any day up to today.
 import React, { act } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createRoot } from 'react-dom/client'
@@ -62,21 +60,21 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-describe('logging a missed planned day', () => {
-  it('is offered on a past planned day with nothing logged, and nowhere else', () => {
-    const offered = iso => {
+describe('logging a selected day', () => {
+  it('offers date-specific logging for past and current dates, including rest days', () => {
+    const offered = (iso, label) => {
       useUI.setState({ sheets: [] })
       dayOverrideSheet(iso)
-      return !!button(mountTopSheet(), 'Log this workout')
+      return !!button(mountTopSheet(), label)
     }
-    expect(offered('2026-09-14')).toBe(true)                 // Monday, missed
-    expect(offered('2026-09-15')).toBe(false)                // Tuesday, a rest day
-    expect(offered('2026-09-16')).toBe(false)                // today: that is still a Start
-    expect(offered('2026-09-18')).toBe(false)                // Friday, still to come
+    expect(offered('2026-09-14', 'Log this workout')).toBe(true) // Monday, planned
+    expect(offered('2026-09-15', 'Log a workout')).toBe(true) // Tuesday, rest day
+    expect(offered('2026-09-16', 'Log a workout')).toBe(true) // today
+    expect(offered('2026-09-18', 'Log a workout')).toBe(false) // Friday, still to come
     install({ workouts: [{ id: 'w', d: '2026-09-11', start: 1, end: 2, name: 'Push', entries: [], prs: [] }] })
-    expect(offered('2026-09-11')).toBe(false)                // last Friday, logged
+    expect(offered('2026-09-11', 'Log another workout')).toBe(true) // last Friday, already logged
     install({ dayPlan: { '2026-09-14': 'rest' } })
-    expect(offered('2026-09-14')).toBe(false)                // Monday moved to rest
+    expect(offered('2026-09-14', 'Log a workout')).toBe(true) // Monday moved to rest
   })
 
   it('opens "Log a past workout" on that day with the day\'s routines, as one session', () => {

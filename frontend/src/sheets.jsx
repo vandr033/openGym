@@ -4,7 +4,7 @@ import { useUI } from './store/useUI.js'
 import { EXDB, EXIDX, BODYPARTS, isCardio, isBodyweightEq, allExercises, equipmentOf, smOf, searchExercises, matchExercise as matchesExerciseSearch, exOr, isAssisted, betterWeight, beatsWeight } from './lib/exercises.js'
 import { activeProfile, exAvailable, ALL_EQUIPMENT, newProfile } from './lib/equipment.js'
 import { fmtDate, fmtDateRange, fmtNum, fmtPlate, exerciseNameText, fmtVol, fmtDur, durPart, todayISO, isoOf, uid, exCount, routineCount, setsWorkCount, DAYN, DAYS, weekOrder, weekStartOf, weekDayOffset, MONTHS_LONG, ACCENTS } from './lib/format.js'
-import { lastEntryFor, bestWeightFor, bestWeightForEntry, buildSets, effectiveRoutineIds, workoutDay, workoutVolume, setsDone, setsDoneActive, setUnitsTotal, lastBW, supersetUnits, sessionSections, unitOf, setLabel, defaultConfig, cleanupSg, modeOf, effortOf, EFFORT, capEffort, stepEffort, isBw, isPerSide, sideReps, workSetsDone, applyIntensifierPlan, MAX_PLANNED_WARMUPS, NOTE_MAX } from './lib/history.js'
+import { lastEntryFor, bestWeightFor, bestWeightForEntry, buildSets, effectiveRoutineIds, workoutDay, workoutVolume, setsDone, setsDoneActive, setUnitsTotal, lastBW, supersetUnits, sessionSections, unitOf, setLabel, fmtSec, defaultConfig, cleanupSg, modeOf, effortOf, EFFORT, capEffort, stepEffort, isBw, isPerSide, sideReps, workSetsDone, applyIntensifierPlan, MAX_PLANNED_WARMUPS, NOTE_MAX } from './lib/history.js'
 import { usesBar, defaultBarWeight, hasBarOverride, isNoBar } from './lib/bar.js'
 import { PLATE_SIZES, pairsOf, ownsPlates, withPlatePairs, withStandardPlates, withLoadKind, loadKindFor, baseWeightFor, dropGrid } from './lib/plates.js'
 import { toScale, rirOf, EFFORT_PRESETS, effortColor } from './lib/effort.js'
@@ -45,7 +45,7 @@ import { isFav, toggleFav, sortFavouritesFirst } from './lib/favourites.js'
 import { buildSessionEntries, buildPlannedEntry, builtOutOfProgression } from './lib/session-start.js'
 import { joinSessionNoProg } from './lib/session-noprog.js'
 import { buildCombinedEntries, deriveSessionName } from './lib/session-merge.js'
-import { workoutsOn, backfillStart, backfillEnd, completeBackfill, historyAsOf, sessionHistory, insertChronological } from './lib/backfill.js'
+import { backfillStart, backfillEnd, completeBackfill, historyAsOf, sessionHistory, insertChronological } from './lib/backfill.js'
 import { moveWorkout, sameWorkout, startTimeOf, durationMinOf, setWorkoutDuration, rebuildPrHistory } from './lib/workout-date.js'
 import { editCompletedSession, editLeftEmpty, editedRecord, editChangesNothing } from './lib/session-edit.js'
 import { stampWorkout } from './lib/sync-merge.js'
@@ -2013,9 +2013,9 @@ function RoutineImport({ close }) {
   const prompt = [
     'Create a gym routine using the openGym JSON format below.',
     'Return only valid JSON. Do not include Markdown. Do not use internal exercise IDs.',
-    'Use conventional exercise names. sets is the planned work-set count; repRange is the target range; restSeconds is the normal rest after a set; progression.step is the load increment. Include these and notes where appropriate.',
+    'Use conventional exercise names. Rep exercises use repRange; timed holds use mode:"time" and durationSeconds (5–3600), with progression type "time" or "off". sets is the planned work-set count; restSeconds is the normal rest after a set; progression.step is the load increment for reps or seconds for timed holds. Include these and notes where appropriate.',
     'Optional warmupSets (0–5) adds that many ramp-up sets before the work sets. Each ramp-up closes half the remaining weight gap; warm-ups do not count as work, volume, records, or progression.',
-    'For drop-sets, use intensifier: {"type":"dropset","count":2,"pct":20}. count is 1–30 and pct is 5–90; each work set gets that many drops, each pct% lighter than the previous one, with no rest between drops.',
+    'Rep exercises can use intensifiers. For drop-sets, use intensifier: {"type":"dropset","count":2,"pct":20}. count is 1–30 and pct is 5–90; each work set gets that many drops, each pct% lighter than the previous one, with no rest between drops.',
     'For rest-pause, use intensifier: {"type":"restpause","totalReps":12,"restSec":15}. totalReps is 1–100 and restSec is 5–3600 seconds. It replaces the configured set list with one automatic warm-up at the exercise rep target and one work set whose totalReps are split into roughly halving bursts; restSec is the short rest between bursts. Do not combine rest-pause with warmupSets.',
     '',
     template
@@ -2252,6 +2252,7 @@ function PlanImport({ bundle, close }) {
 /* ============================ day override / assign ============================ */
 function DayOverride({ iso, close }) {
   const st = useStore(s => s.S)
+  const dayWorkouts = (st.workouts || []).filter(w => workoutDay(w) === iso)
   const wd = new Date(iso + 'T12:00:00').getDay()
   const weeklyNames = [].concat(st.week[wd] || []).map(id => st.routines.find(r => r.id === id)?.name).filter(Boolean)
   const hasOvr = st.dayPlan[iso] !== undefined
@@ -2259,10 +2260,9 @@ function DayOverride({ iso, close }) {
   // one here collapses a combined day to it (docs/dev/COMBINE_ROUTINES.md §8). The check marks
   // show everything currently planned for the day.
   const effIds = effectiveRoutineIds(st, iso)
-  // A planned day in the past with nothing logged was missed — or trained and never logged,
-  // like a run you forgot to start the app for (#284). Logging it opens "Log a past workout" on
-  // that date with the day's routines picked, where the time and the duration can still change.
-  const missed = iso < todayISO() && effIds.length > 0 && !workoutsOn(st, iso).length
+  // Any past or current date can open the same logger. A planned day starts with its routines;
+  // a rest day starts freestyle, and existing workouts remain available to inspect below.
+  const canLog = iso <= todayISO()
   const logIt = () => { close(); logPastWorkoutSheet({ iso, routineIds: effIds }) }
   const set = v => {
     update(s => { if (!v) delete s.dayPlan[iso]; else s.dayPlan[iso] = v })
@@ -2271,8 +2271,12 @@ function DayOverride({ iso, close }) {
   }
   return <>
     <h3>{fmtDate(iso, true)}</h3>
+    {dayWorkouts.length > 0 && <>
+      <h4 className="sec">{t(dayWorkouts.length === 1 ? '{0} workout' : '{0} workouts', dayWorkouts.length)}</h4>
+      <div className="list" style={{ marginBottom: 12 }}>{dayWorkouts.map(w => <WorkoutRow key={w.id} w={w} onClick={() => { close(); workoutDetailSheet(w) }} />)}</div>
+    </>}
     <div className="muted small" style={{ marginBottom: 12 }}>{t('Weekly plan:')} {weeklyNames.length ? deriveSessionName(weeklyNames) : t('Rest')}{hasOvr && <span style={{ color: 'var(--orange)' }}> · {t('changed for this day')}</span>}<br />{t('Sick, missed a day or want a different session? Pick what to train instead.')}</div>
-    {missed && <div style={{ marginBottom: 14 }}><Button variant="primary" icon="checkCircle" onClick={logIt}>{t('Log this workout')}</Button></div>}
+    {canLog && <div style={{ marginBottom: 14 }}><Button variant="primary" icon="checkCircle" onClick={logIt}>{dayWorkouts.length ? t('Log another workout') : effIds.length ? t('Log this workout') : t('Log a workout')}</Button></div>}
     <div className="list">
       {st.routines.map(r => <div key={r.id} className="item" {...tappable(() => set(r.id))}>
         <span className="lrow-i"><Icon name={glyphOf(r.emoji)} /></span>
@@ -2476,6 +2480,7 @@ function WorkoutDetail({ w, close }) {
   const update = useStore(s => s.update)
   const savedWorkout = st.workouts.find(x => sameWorkout(x, w)) || w
   const manual = savedWorkout.manualMetrics || {}
+  const trackedActiveSec = (savedWorkout.entries || []).reduce((sum, entry) => sum + (entry.sets || []).reduce((n, set) => n + (Number(set.activeSec) || 0), 0), 0)
   // The session note is editable here rather than only at the finish sheet: what you want to
   // record about a session is often clearer once you have looked at what you actually did.
   const [note, setNote] = useState(w.note || '')
@@ -2516,6 +2521,7 @@ function WorkoutDetail({ w, close }) {
       {ex && <Thumb ex={ex} />}
       <div className="grow"><div className={`tt ${exerciseNameClass(ex)}`} style={{ fontWeight: 600 }}>{nameOf(e)} {w.prs && w.prs.includes(e.id) && <span className="pr"><Icon name="trophy" />PR</span>}</div>
         <div className="ss">{e.sets.filter(hasCompletedWork).map(s => setLabel(e.id, s, e.target, speedUnitOf(st))).join('  ·  ') || t('no sets')}</div>
+        {Number.isInteger(e.feeling) && e.feeling >= 1 && e.feeling <= 5 && <div className="small dim">{t('How it felt')}: {t(['Very easy', 'Easy', 'About right', 'Hard', 'Very hard'][e.feeling - 1])}</div>}
         {e.sets.map((s, setIdx) => s.note && <button key={setIdx} type="button" className="small dim workout-set-note"
           onClick={event => { event.stopPropagation(); setNoteSheet(i, setIdx, w) }}>
           <Icon name="note" />{t('Set {0}: {1}', setIdx + 1, s.note)}
@@ -2553,7 +2559,7 @@ function WorkoutDetail({ w, close }) {
   const grouped = groups.length > 1 || (groups[0] && groups[0].rid && (w.routineIds || []).length > 1)
   return <>
     <h3>{w.name}</h3>
-    <div className="muted small" style={{ marginBottom: 12 }}>{[fmtDate(w.d, true), ...durPart(w.end - w.start), ...(!w.cardioType ? [fmtVol(w.vol, st.unit)] : []), ...(w.bw ? [fmtNum(w.bw) + ' ' + st.unit] : [])].join(' · ')}</div>
+    <div className="muted small" style={{ marginBottom: 12 }}>{[fmtDate(w.d, true), ...durPart(w.end - w.start), ...(!w.cardioType ? [fmtVol(w.vol, st.unit)] : []), ...(trackedActiveSec ? [t('Tracked active time') + ' ' + fmtDur(trackedActiveSec * 1000)] : []), ...(w.bw ? [fmtNum(w.bw) + ' ' + st.unit] : [])].join(' · ')}</div>
     {w.cardioType && <div style={{ marginBottom: 12 }}>
       <Row title={t('Activity')} value={cardioName(w.cardioType)} />
       {(manual.distanceMeters ?? linked?.distanceMeters) != null && <Row title={t('Distance')} value={`${fmtNum((manual.distanceMeters ?? linked.distanceMeters) / distanceFactor(st))} ${speedUnitOf(st) === 'mph' ? 'mi' : 'km'}`} />}
@@ -2666,11 +2672,7 @@ function Calendar({ start, close }) {
     const iso = y + '-' + String(mo + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0')
     const ws = byDay[iso], planned = effectiveRoutineIds(st, iso).length > 0, ovr = st.dayPlan[iso] !== undefined
     const dotCls = ws ? 'done' : ovr && planned ? 'ovr' : planned ? 'plan' : ''
-    cells.push(<button key={d} className={'cal-d' + (ws ? ' has' : '') + (iso === todayISO() ? ' today' : '')} onClick={() => {
-      if (!ws) { close(); dayOverrideSheet(iso); return }
-      if (ws.length === 1) { close(); workoutDetailSheet(ws[0]); return }
-      close(); ui().openSheet(c2 => <><h3>{fmtDate(iso, true)}</h3><div className="list">{ws.map(w => <WorkoutRow key={w.id} w={w} onClick={() => { c2(); workoutDetailSheet(w) }} />)}</div></>)
-    }}><span>{d}</span><i className={dotCls} /></button>)
+    cells.push(<button key={d} className={'cal-d' + (ws ? ' has' : '') + (iso === todayISO() ? ' today' : '')} onClick={() => { close(); dayOverrideSheet(iso) }}><span>{d}</span><i className={dotCls} /></button>)
   }
   return <>
     <div className="row between" style={{ marginBottom: 2 }}>
@@ -2789,7 +2791,7 @@ function LogPastWorkout({ initial, close }) {
   const submit = () => {
     if (!date || date > today) { toast(t('Pick a day up to today')); return }
     if (!(dur >= 1)) { toast(t('Enter how long it took — at least 1 minute.')); return }
-    const existing = workoutsOn(st, date)
+    const existing = (st.workouts || []).filter(w => workoutDay(w) === date)
     if (!existing.length) { go(null); return }
     ui().openSheet(c => <SameDayChoice iso={date} existing={existing} close={c}
       onReplace={id => { c(); go(id) }} onAdd={() => { c(); go(null) }} />, { kind: 'center' })
@@ -3045,7 +3047,7 @@ function TopWeight({ entryIdx, close }) {
     })
     close()
     if (advance && unitDone) {
-      if (workoutDone) workoutCompleteSheet()               // no unfinished unit → finish/continue prompt
+      if (workoutDone) workoutCompleteSheet(entryIdx)       // no unfinished unit → finish/continue prompt
       else update(s => { s.active.cur = nextUnit[0] })
     } else toast(t('Tracked — next time starts at {0}', fmtNum(S().exWeights[entry.id].w) + ' ' + st.unit))
   }
@@ -3321,7 +3323,48 @@ export const renameWorkoutSheet = () => ui().openSheet(close => <RenameWorkout c
    already computed via applyIntensifierPlan; an unplanned straight set can still grow one live
    by tapping "+ Drop"/"+ Burst", which appends with the same suggested-next-value math. */
 
-// Shown when the last exercise's last set is checked — finish, or keep going.
+function ExerciseComplete({ entryIdx, workoutDone = false, close }) {
+  const st = useStore(s => s.S)
+  const update = useStore(s => s.update)
+  const entry = st.active?.entries?.[entryIdx]
+  if (!entry) return <WorkoutComplete close={close} />
+  const mode = modeOf({ ...(entry.target || {}), id: entry.id })
+  const workSets = entry.sets.filter(set => !isWarmupRow(set))
+  const completed = workSets.filter(set => set.done)
+  const activeSec = workSets.reduce((sum, set) => sum + (Number(set.activeSec) || 0), 0)
+  const volume = workoutVolume({ entries: [entry] })
+  const longest = Math.max(0, ...completed.map(set => Number(set.sec) || 0))
+  const cardioMin = completed.reduce((sum, set) => sum + (Number(set.min) || 0), 0)
+  const feel = value => update(s => { if (s.active?.entries?.[entryIdx]) s.active.entries[entryIdx].feeling = value })
+  const feelings = [t('Very easy'), t('Easy'), t('About right'), t('Hard'), t('Very hard')]
+  return <div style={{ textAlign: 'center', padding: '8px 0' }}>
+    <div style={{ fontSize: 40, display: 'flex', justifyContent: 'center', color: 'var(--acc)' }}><Icon name="checkCircle" /></div>
+    <h3 style={{ margin: '8px 0' }}>{t('Exercise complete')}</h3>
+    <div className="tiles" style={{ textAlign: 'start' }}>
+      <div className="tile"><div className="l">{t('Sets')}</div><div className="v">{completed.length}/{workSets.length}</div></div>
+      {mode === 'reps' && <div className="tile"><div className="l">{t('Volume')}</div><div className="v" style={{ fontSize: '1.1rem' }}>{fmtVol(volume, st.unit)}</div></div>}
+      {mode === 'time' && <div className="tile"><div className="l">{t('Longest hold')}</div><div className="v" style={{ fontSize: '1.1rem' }}>{fmtSec(longest)}</div></div>}
+      {mode === 'cardio' && <div className="tile"><div className="l">{t('Duration')}</div><div className="v" style={{ fontSize: '1.1rem' }}>{fmtDur(cardioMin * 60000)}</div></div>}
+      {activeSec > 0 && <div className="tile"><div className="l">{t('Tracked active time')}</div><div className="v" style={{ fontSize: '1.1rem' }}>{fmtDur(activeSec * 1000)}</div></div>}
+    </div>
+    <div style={{ textAlign: 'start', marginBottom: 14 }}>
+      <b>{t('How did this feel?')}</b>
+      <div className="small dim" style={{ margin: '3px 0 8px' }}>{t('Optional · 1 very easy · 3 about right · 5 very hard')}</div>
+      <div className="readiness-scores" role="group" aria-label={t('How did this feel?')}>
+        {feelings.map((label, index) => <button type="button" key={label}
+          className={'chip' + (entry.feeling === index + 1 ? ' on' : '')}
+          aria-label={`${index + 1}: ${label}`} aria-pressed={entry.feeling === index + 1}
+          onClick={() => feel(index + 1)}>{index + 1}</button>)}
+      </div>
+    </div>
+    {workoutDone ? <>
+      <div className="muted small" style={{ marginBottom: 12 }}>{t('Every exercise done — great work.')}</div>
+      <Button variant="primary" icon="flag" onClick={() => { close(); finishWorkout() }}>{t('Finish workout')}</Button>
+      <div style={{ height: 8 }} />
+      <Button onClick={() => { close(); useUI.getState().toast(t('Keep going — tap “+ Add exercise” below')) }}>{t('Continue workout')}</Button>
+    </> : <Button variant="primary" onClick={close}>{t('Continue workout')}</Button>}
+  </div>
+}
 function WorkoutComplete({ close }) {
   return <div style={{ textAlign: 'center', padding: '8px 0' }}>
     <div style={{ fontSize: 44, display: 'flex', justifyContent: 'center', color: 'var(--acc)' }}><Icon name="checkCircle" /></div>
@@ -3332,7 +3375,8 @@ function WorkoutComplete({ close }) {
     <Button onClick={() => { close(); useUI.getState().toast(t('Keep going — tap “+ Add exercise” below')) }}>{t('Continue workout')}</Button>
   </div>
 }
-export const workoutCompleteSheet = () => ui().openSheet(close => <WorkoutComplete close={close} />, { kind: 'center' })
+export const exerciseCompleteSheet = entryIdx => ui().openSheet(close => <ExerciseComplete entryIdx={entryIdx} close={close} />, { kind: 'center' })
+export const workoutCompleteSheet = entryIdx => ui().openSheet(close => <ExerciseComplete entryIdx={entryIdx} workoutDone close={close} />, { kind: 'center' })
 
 export function saveWorkoutEdits(onExit = () => nav('/history')) {
   // An edit that unticked or removed every set would save a workout with nothing in it, which
@@ -3388,6 +3432,7 @@ function FinishSummary({ w, prs, e1prs = [], close }) {
   const st = useStore(s => s.S)
   const latest = st.workouts.find(x => sameWorkout(x, w)) || w
   const metrics = latest.manualMetrics || {}
+  const trackedActiveSec = (latest.entries || []).reduce((sum, entry) => sum + (entry.sets || []).reduce((n, set) => n + (Number(set.activeSec) || 0), 0), 0)
   return <div style={{ textAlign: 'center', padding: '8px 0' }}>
     <div style={{ fontSize: 44, display: 'flex', justifyContent: 'center', color: 'var(--acc)' }}><Icon name="trophy" /></div>
     <h3 style={{ margin: '8px 0' }}>{t('Workout complete!')}</h3>
@@ -3397,6 +3442,7 @@ function FinishSummary({ w, prs, e1prs = [], close }) {
       <div className="tile"><div className="l">{t('Sets')}</div><div className="v" style={{ fontSize: '1.1rem' }}>{setsWorkCount(setsDone(w), workSetsDone(w))}</div></div>
       <div className="tile"><div className="l">{t('PRs')}</div><div className="v" style={{ fontSize: 20 }}>{prs.length || '—'}</div></div>
     </div>
+    {trackedActiveSec > 0 && <div className="muted small" style={{ marginBottom: 12 }}>{t('Tracked active time')}: {fmtDur(trackedActiveSec * 1000)}</div>}
     {(prs.length > 0 || e1prs.length > 0) && <div style={{ textAlign: 'start', marginBottom: 12 }}>
       {prs.map(id => <div key={id} className="small accent row" style={{ gap: 5 }}><Icon name="trophy" style={{ fontSize: 13 }} />{t('New PR:')} <span className={exerciseNameClass(EXIDX[id])}>{EXIDX[id] ? exerciseNameFor(EXIDX[id]) : id}</span></div>)}
       {e1prs.map(p => <div key={p.id} className="small accent row" style={{ gap: 5 }}><Icon name="chartLine" style={{ fontSize: 13 }} />{t('Best estimated 1RM:')} <span className={exerciseNameClass(EXIDX[p.id])}>{EXIDX[p.id] ? exerciseNameFor(EXIDX[p.id]) : p.id}</span> · {fmtNum(p.est)} {st.unit}</div>)}

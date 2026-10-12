@@ -177,6 +177,7 @@ export function exerciseHistoryPrompt(data) {
 
 export const TRAINING_AI_PROMPT = [
   'Analyze my training over this period.',
+  'Timed holds use seconds in durationSeconds and are not rep sets.',
   '',
   'Look for:',
   '- progression trends',

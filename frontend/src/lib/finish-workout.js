@@ -14,13 +14,13 @@ import { hasCompletedWork, isSideSet } from './workout-model.js'
 // saved workout, the server copy and every backup as a field nothing reads — on the row and on
 // each side of a per-side row, where the side keeps its own.
 //
-// Rows that carry neither are passed through by reference, so an ordinary session is the shape
-// it always was.
+// Rows that carry no live plan, load-origin or set-clock bookkeeping pass through unchanged.
 function finishedRow(set) {
   if (!set) return set
   const sideMarked = isSideSet(set) && (set.sides.L.weightOrigin != null || set.sides.R.weightOrigin != null)
-  if (set.planSec == null && set.weightOrigin == null && !sideMarked) return set
+  if (set.planSec == null && set.weightOrigin == null && set.startedAt == null && !sideMarked) return set
   const { planSec, weightOrigin, ...rest } = set
+  delete rest.startedAt
   if (sideMarked) {
     const side = ({ weightOrigin: _, ...kept }) => kept
     rest.sides = { ...rest.sides, L: side(rest.sides.L), R: side(rest.sides.R) }
@@ -41,6 +41,7 @@ export function buildCompletedWorkout(active, { end = Date.now(), prs = [], snap
       // shape it always was. Without this the whitelist drops both at finish.
       ...(entry.rid ? { rid: entry.rid } : {}),
       ...(entry.noProg === true ? { noProg: true } : {}),
+      ...(Number.isInteger(entry.feeling) && entry.feeling >= 1 && entry.feeling <= 5 ? { feeling: entry.feeling } : {}),
       // What the routine asked for when the session was built (session-start.js), next to the
       // target the prescription moved — how the next session tells an edited plan (#275).
       ...(entry.planned ? { planned: entry.planned } : {}),

@@ -44,6 +44,21 @@ describe('completed workout boundary', () => {
     })
   })
 
+  it('keeps measured active time and exercise feel, while dropping the live set clock', () => {
+    const active = {
+      id: 'active-feel', d: '2026-10-06', start: 1000,
+      entries: [{ id: '0025', feeling: 3, sets: [
+        { done: true, w: 60, r: 8, activeSec: 42, startedAt: 1000 },
+        { done: false, w: 60, r: 8, startedAt: 2000 },
+      ] }],
+    }
+    expect(buildCompletedWorkout(active, { end: 2000 }).entries[0]).toMatchObject({
+      feeling: 3,
+      sets: [{ done: true, w: 60, r: 8, activeSec: 42 }, { done: false, w: 60, r: 8 }],
+    })
+    expect(JSON.stringify(buildCompletedWorkout(active))).not.toContain('startedAt')
+  })
+
   // planSec is live-session bookkeeping — the plan a hold displaced before it finished put aside
   // (Workout.startTimed). A finished session keeps only what was logged, so an unfinished row goes
   // back to recording its plan and the key never reaches S.workouts.

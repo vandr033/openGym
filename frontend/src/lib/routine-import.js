@@ -7,7 +7,7 @@ import { MAX_PLANNED_WARMUPS } from './history.js'
 export const ROUTINE_FORMAT = 'opengym-routine-v1'
 export const ROUTINE_TEMPLATE = {
   format: ROUTINE_FORMAT,
-  _instructions: 'Use conventional exercise names. Each routine has a name, an exercises list, and optional deload: true. Each exercise uses exercise, sets, repRange min/max, optional weight and weightUnit (kg or lb), warmupSets (0–5 ramp-up sets before work), intensifier (drop-set or rest-pause), restSeconds, progression type and step, and optional notes. Drop-set uses count 1–30 and pct 5–90; it applies that many drops, each pct percent lighter, to every work set. Rest-pause uses totalReps 1–100 and restSec 5–3600; it replaces the set list with one warm-up at the exercise rep target and one work set split into totalReps bursts with restSec between them. Do not combine it with warmupSets. Schedule uses weekday names and routine names from this file.',
+  _instructions: 'Use conventional exercise names. Each routine has a name, an exercises list, and optional deload: true. Rep exercises use repRange min/max; timed holds use mode "time" and durationSeconds (5–3600), with progression type "time" or "off". Exercises may also use optional weight and weightUnit (kg or lb), warmupSets (0–5 ramp-up sets before work), restSeconds, progression type and step, and optional notes. Rep exercises may use intensifier (drop-set or rest-pause). Drop-set uses count 1–30 and pct 5–90; it applies that many drops, each pct percent lighter, to every work set. Rest-pause uses totalReps 1–100 and restSec 5–3600; it replaces the set list with one warm-up at the exercise rep target and one work set split into totalReps bursts with restSec between them. Do not combine it with warmupSets. Schedule uses weekday names and routine names from this file.',
   name: 'Upper Lower Hypertrophy',
   schedule: [
     { day: 'monday', routine: 'Upper A' },
@@ -39,6 +39,15 @@ export const ROUTINE_TEMPLATE = {
           intensifier: { type: 'dropset', count: 2, pct: 20 },
           progression: { type: 'double', step: 2.5 },
           notes: 'Pause briefly at the chest'
+        },
+        {
+          exercise: 'Plank',
+          mode: 'time',
+          sets: 3,
+          durationSeconds: 45,
+          restSeconds: 60,
+          progression: { type: 'time', step: 5 },
+          notes: 'Keep a straight line from head to heels'
         }
       ]
     },
@@ -126,14 +135,19 @@ function normalizeExercise(source, unit, exercises) {
   const name = cleanName(typeof source === 'string' ? source : source?.exercise)
   if (!name || name.length > 120) throw new Error('Each exercise needs a name of up to 120 characters.')
   const cfg = typeof source === 'string' ? {} : source
+  if (cfg.mode != null && !['reps', 'time'].includes(cfg.mode)) throw new Error('Mode must be reps or time.')
+  const timed = cfg.mode === 'time' || cfg.durationSeconds != null
+  if (timed && (cfg.mode === 'reps' || cfg.repRange != null || cfg.reps != null)) throw new Error('Timed exercises use durationSeconds, not reps or repRange.')
+  if (cfg.mode === 'time' && cfg.durationSeconds == null) throw new Error('Timed exercises need durationSeconds.')
   if (cfg.repRange != null && (typeof cfg.repRange !== 'object' || Array.isArray(cfg.repRange))) throw new Error('Rep range must have min and max numbers.')
   if (cfg.progression != null && (typeof cfg.progression !== 'object' || Array.isArray(cfg.progression))) throw new Error('Progression must be an object with a type and optional step.')
   if (cfg.weightUnit != null && !unitOf(cfg.weightUnit)) throw new Error('Weight unit must be kg or lb.')
   if (cfg.notes != null && typeof cfg.notes !== 'string') throw new Error('Exercise notes must be plain text.')
   const sets = validNumber(cfg.sets ?? 3, 1, 30, 'Set count', true)
   const range = cfg.repRange || {}
-  const min = validNumber(range.min ?? cfg.reps ?? 8, 1, 100, 'Minimum reps', true)
-  const max = validNumber(range.max ?? cfg.reps ?? 12, min, 100, 'Maximum reps', true)
+  const min = timed ? null : validNumber(range.min ?? cfg.reps ?? 8, 1, 100, 'Minimum reps', true)
+  const max = timed ? null : validNumber(range.max ?? cfg.reps ?? 12, min, 100, 'Maximum reps', true)
+  const duration = timed ? validNumber(cfg.durationSeconds, 5, 3600, 'Timed duration', true) : null
   const externalUnit = unitOf(cfg.weightUnit) || unit
   let weight, step
   if (cfg.weight != null) {
@@ -146,13 +160,13 @@ function normalizeExercise(source, unit, exercises) {
   if (cfg.intensifier != null) {
     if (typeof cfg.intensifier !== 'object' || Array.isArray(cfg.intensifier)) throw new Error('Intensifier must be a drop-set or rest-pause object.')
     const type = String(cfg.intensifier.type || '').toLowerCase()
-    if (type === 'dropset') {
+    if (type === 'dropset' && !timed) {
       intensifier = {
         type,
         count: validNumber(cfg.intensifier.count ?? 1, 1, 30, 'Drop count', true),
         pct: validNumber(cfg.intensifier.pct ?? 20, 5, 90, 'Drop percentage', true)
       }
-    } else if (type === 'restpause') {
+    } else if (type === 'restpause' && !timed) {
       if (warmupSets) throw new Error('Rest-pause creates its own warm-up; do not combine it with warmupSets.')
       intensifier = {
         type,
@@ -161,15 +175,18 @@ function normalizeExercise(source, unit, exercises) {
       }
     } else throw new Error('Unsupported intensifier type: ' + type)
   }
-  const progressionType = String(cfg.progression?.type || (range.min != null ? 'double' : 'linear')).toLowerCase()
-  const progression = ({ double: 'double', 'double progression': 'double', linear: 'linear', greyskull: 'greyskull', off: 'off', none: 'off' })[progressionType]
+  const progressionType = String(cfg.progression?.type || (timed ? 'off' : range.min != null ? 'double' : 'linear')).toLowerCase()
+  const progression = (timed
+    ? { time: 'time', off: 'off', none: 'off' }
+    : { double: 'double', 'double progression': 'double', linear: 'linear', greyskull: 'greyskull', off: 'off', none: 'off' })[progressionType]
   if (!progression) throw new Error('Unsupported progression type: ' + progressionType)
   if (cfg.progression?.step != null) {
-    step = validNumber(cfg.progression.step, 0.01, 100, 'Progression step')
-    if (progressionType !== 'off' && externalUnit !== unit) step = convertWeight(step, externalUnit, unit)
+    step = validNumber(cfg.progression.step, timed ? 1 : 0.01, timed ? 3600 : 100, 'Progression step', timed)
+    if (!timed && progressionType !== 'off' && externalUnit !== unit) step = convertWeight(step, externalUnit, unit)
   }
   const config = {
-    sets, reps: max, ...(min < max ? { repsMin: min } : {}),
+    sets,
+    ...(timed ? { mode: 'time', sec: duration } : { reps: max, ...(min < max ? { repsMin: min } : {}) }),
     ...(weight != null ? { weight } : {}),
     ...(restSec != null ? { restSec } : {}),
     ...(warmupSets ? { warmupSets } : {}),
