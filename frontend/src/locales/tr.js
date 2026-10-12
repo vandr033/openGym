@@ -1606,6 +1606,8 @@ export default {
   'Export with photos & videos (.zip)': 'Fotoğraf ve videolarla dışa aktar (.zip)',
   '{0} files could not be included': '{0} dosya eklenemedi',
   '{0} file could not be included': '{0} dosya eklenemedi',
+  'With images': 'Görseli olan',
+  'Without images': 'Görseli olmayan',
   'Without photos and videos': 'Fotoğraf ve videolar hariç',
   'Name it and pick a body part — it behaves like any other exercise.': 'Bir ad ver ve bir vücut bölgesi seç — diğer egzersizler gibi çalışır.',
   'name + body part, and a photo or video if you like': 'ad + vücut bölgesi, istersen bir fotoğraf veya video',

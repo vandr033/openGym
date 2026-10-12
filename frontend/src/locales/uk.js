@@ -1603,6 +1603,8 @@ export default {
   'Export with photos & videos (.zip)': 'Експорт із фото й відео (.zip)',
   '{0} files could not be included': 'Не вдалося додати файлів: {0}',
   '{0} file could not be included': 'Не вдалося додати {0} файл',
+  'With images': 'З зображеннями',
+  'Without images': 'Без зображень',
   'Without photos and videos': 'Без фото й відео',
   'Name it and pick a body part — it behaves like any other exercise.': 'Дай назву й вибери частину тіла — вправа працює як будь-яка інша.',
   'name + body part, and a photo or video if you like': 'назва + частина тіла, а за бажання — фото чи відео',

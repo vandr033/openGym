@@ -8,6 +8,7 @@ import { bestWeightFor } from '../lib/history.js'
 import { fmtNum, exCount } from '../lib/format.js'
 import { t, exerciseNameFor, exerciseNameClass } from '../lib/i18n.js'
 import { Thumb } from '../components/Media.jsx'
+import { mediaOf } from '../lib/media-refs.js'
 import { exerciseDetailSheet, addToRoutineSheet, customExSheet } from '../sheets.jsx'
 import Icon from '../components/Icon.jsx'
 import { Button } from '../components/ui.jsx'
@@ -20,12 +21,23 @@ export default function Library() {
   const [q, setQ] = useState('')
   const [bp, setBp] = useState('')
   const [eq, setEq] = useState('')
+  const [imageFilter, setImageFilter] = useState('')
   const [showAll, setShowAll] = useState(false)   // ignore the active equipment profile for this session
   const [shown, setShown] = useState(40)
   const bpStrip = useRef(null), eqStrip = useRef(null)
   const profile = activeProfile(S)
+  const overrides = useStore(s => s.config?.exercise_media)
   const base = searchExercises(allExercises(S).filter(e => !bp || e.bp === bp), q)
-  const eqFiltered = (profile && !showAll) ? base.filter(e => exAvailable(S, e)) : base
+  const hasImage = e => {
+    if (e.custom) {
+      const media = mediaOf(e)
+      return media?.kind === 'image' || media?.kind === 'gif' || !!media?.poster
+    }
+    const media = overrides?.[e.id] ? { ...e, ...overrides[e.id] } : e
+    return !!(media.img || media.gif)
+  }
+  const mediaFiltered = imageFilter ? base.filter(e => hasImage(e) === (imageFilter === 'with')) : base
+  const eqFiltered = (profile && !showAll) ? mediaFiltered.filter(e => exAvailable(S, e)) : mediaFiltered
   const eqOpts = equipmentOf(eqFiltered)
   // Drop the equipment filter if the search narrowed it away, so you never hit a dead end.
   const eqOn = eqOpts.includes(eq) ? eq : ''
@@ -35,7 +47,7 @@ export default function Library() {
   useRevealActiveChip(eqStrip, eqOn)
   // A live count at the end of the search field while a search or filter narrows the list
   // (idea and first version: GitLab !31) — how many are left, before scrolling to find out.
-  const narrowed = !!(q.trim() || bp || eqOn)
+  const narrowed = !!(q.trim() || bp || eqOn || imageFilter)
 
   return <>
     <div className="hdr"><div><h1>{t('Exercises')}</h1><div className="sub">{t('{0} exercises with animations', EXDB.length)}</div></div>
@@ -57,6 +69,11 @@ export default function Library() {
     <div className="chips" ref={bpStrip} style={{ marginBottom: eqOpts.length > 1 ? 8 : 12 }}>
       <button className={'chip nocap' + (!bp ? ' on' : '')} onClick={() => { setBp(''); setEq(''); setShown(40) }}>{t('All')}</button>
       {BODYPARTS.map(b => <button key={b} className={'chip' + (bp === b ? ' on' : '')} onClick={() => { setBp(b); setShown(40) }}>{t(b)}</button>)}
+    </div>
+    <div className="chips" style={{ marginBottom: 12 }}>
+      <button className={'chip nocap' + (!imageFilter ? ' on' : '')} onClick={() => { setImageFilter(''); setShown(40) }}>{t('All')}</button>
+      <button className={'chip nocap' + (imageFilter === 'with' ? ' on' : '')} onClick={() => { setImageFilter('with'); setShown(40) }}>{t('With images')}</button>
+      <button className={'chip nocap' + (imageFilter === 'without' ? ' on' : '')} onClick={() => { setImageFilter('without'); setShown(40) }}>{t('Without images')}</button>
     </div>
     {eqOpts.length > 1 && <div className="chips" ref={eqStrip} style={{ marginBottom: 12 }}>
       <button className={'chip nocap' + (!eqOn ? ' on' : '')} onClick={() => { setEq(''); setShown(40) }}>{t('Any equipment')}</button>
@@ -81,4 +98,3 @@ export default function Library() {
     {f.length > shown && <><div style={{ height: 10 }} /><Button onClick={() => setShown(s => s + 40)}>{t('Show more')}</Button></>}
   </>
 }
-

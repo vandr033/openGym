@@ -1617,6 +1617,8 @@ export default {
   'Export with photos & videos (.zip)': 'ส่งออกพร้อมรูปภาพและวิดีโอ (.zip)',
   '{0} files could not be included': 'ใส่ไฟล์ไม่ได้ {0} ไฟล์',
   '{0} file could not be included': 'ใส่ไฟล์ไม่ได้ {0} ไฟล์',
+  'With images': 'มีรูปภาพ',
+  'Without images': 'ไม่มีรูปภาพ',
   'Without photos and videos': 'ไม่รวมรูปภาพและวิดีโอ',
   'Name it and pick a body part — it behaves like any other exercise.': 'ตั้งชื่อและเลือกส่วนร่างกาย — ใช้งานได้เหมือนท่าอื่นทุกประการ',
   'name + body part, and a photo or video if you like': 'ชื่อ + ส่วนร่างกาย และรูปหรือวิดีโอถ้าต้องการ',

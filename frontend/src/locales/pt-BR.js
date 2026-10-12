@@ -961,6 +961,8 @@ export const PT_BR_OVERRIDES = {
   'Export with photos & videos (.zip)': 'Exportar com fotos e vídeos (.zip)',
   '{0} files could not be included': 'Não foi possível incluir {0} arquivos',
   '{0} file could not be included': 'Não foi possível incluir {0} arquivo',
+  'With images': 'Com imagens',
+  'Without images': 'Sem imagens',
   'Without photos and videos': 'Sem fotos nem vídeos',
   'Name it and pick a body part — it behaves like any other exercise.': 'Dê um nome e escolha uma parte do corpo — ele funciona como qualquer outro exercício.',
   'name + body part, and a photo or video if you like': 'nome + parte do corpo, e uma foto ou vídeo se quiser',

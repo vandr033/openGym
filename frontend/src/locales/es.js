@@ -1606,6 +1606,8 @@ export default {
   'Export with photos & videos (.zip)': 'Exportar con fotos y vídeos (.zip)',
   '{0} files could not be included': 'No se pudieron incluir {0} archivos',
   '{0} file could not be included': 'No se pudo incluir {0} archivo',
+  'With images': 'Con imágenes',
+  'Without images': 'Sin imágenes',
   'Without photos and videos': 'Sin fotos ni vídeos',
   'Name it and pick a body part — it behaves like any other exercise.': 'Ponle nombre y elige una parte del cuerpo — funciona como cualquier otro ejercicio.',
   'name + body part, and a photo or video if you like': 'nombre + parte del cuerpo, y una foto o vídeo si quieres',

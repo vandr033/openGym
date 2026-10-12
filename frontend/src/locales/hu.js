@@ -1609,6 +1609,8 @@ export default {
   'Export with photos & videos (.zip)': 'Exportálás fotókkal és videókkal (.zip)',
   '{0} files could not be included': '{0} fájlt nem sikerült hozzáadni',
   '{0} file could not be included': '{0} fájlt nem sikerült hozzáadni',
+  'With images': 'Képekkel',
+  'Without images': 'Képek nélkül',
   'Without photos and videos': 'Fotók és videók nélkül',
   'Name it and pick a body part — it behaves like any other exercise.': 'Adj neki nevet, és válassz testrészt — úgy működik, mint bármelyik másik gyakorlat.',
   'name + body part, and a photo or video if you like': 'név + testrész, és ha szeretnéd, egy fotó vagy videó',
