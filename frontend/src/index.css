@@ -947,7 +947,7 @@ body.chips-dragging *{cursor:inherit}
 .program-days{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:0 10px}
 @media (max-width:520px){.program-panel{padding:12px}.program-panel-actions>button{flex:1 1 auto}.program-days{grid-template-columns:1fr}}
 .routine-header-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
-.routine-import-scroll{max-height:calc(100dvh - 220px);overflow:auto;padding:0 2px 8px}
+.routine-import-scroll{min-width:0;padding:0 2px 8px}
 .routine-import-summary,.routine-import-routine,.routine-import-schedule,.routine-import-collision{display:grid;gap:7px;margin:10px 0;padding:11px;border:1px solid var(--line);border-radius:10px}
 .routine-import-summary{grid-template-columns:repeat(auto-fit,minmax(95px,1fr));font-size:12px;color:var(--muted)}
 .routine-import-summary b{grid-column:1/-1;color:var(--label)}
@@ -955,7 +955,7 @@ body.chips-dragging *{cursor:inherit}
 .routine-import-select{margin-top:6px}
 .routine-import-schedule .row{gap:8px;font-size:13px}
 .routine-import-input{width:100%;resize:vertical;font-family:var(--font-mono,monospace);font-size:12px;line-height:1.45;margin-bottom:10px}
-@media (max-width:480px){.routine-header-actions{width:100%;justify-content:stretch}.routine-header-actions>button{flex:1}.routine-import-scroll{max-height:calc(100dvh - 250px)}}
+@media (max-width:480px){.routine-header-actions{width:100%;justify-content:stretch}.routine-header-actions>button{flex:1}}
 .setrow .stp.w{flex:1.4;min-width:0}
 .setrow .stp.r{flex:1;min-width:0}
 /* The number outranks the buttons in every set row, not only the ones with an effort column

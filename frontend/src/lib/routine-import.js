@@ -262,7 +262,7 @@ export function applyRoutineImport(state, parsed, {
   const existingNames = new Set((state.routines || []).map(r => keyName(r.name)))
   const routineIds = new Map()
   const created = []
-  const customByName = new Map()
+  const customByName = new Map((state.customEx || []).map(ex => [keyName(ex.n), ex.id]))
   for (let ri = 0; ri < parsed.routines.length; ri++) {
     const incoming = parsed.routines[ri]
     const collisionRoutine = sameName.get(keyName(incoming.name))

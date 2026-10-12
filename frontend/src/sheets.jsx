@@ -2025,7 +2025,7 @@ function RoutineImport({ close }) {
       const result = parseRoutineImport(value, { unit: st.unit || 'kg', state: st })
       const initial = {}
       result.routines.forEach((routine, ri) => routine.exercises.forEach((exercise, ei) => {
-        initial[ri + ':' + ei] = exercise.match.selectedId
+        initial[ri + ':' + ei] = exercise.match.status === 'unmatched' ? '' : exercise.match.selectedId
       }))
       setText(value)
       setChoices(initial)
@@ -2052,7 +2052,27 @@ function RoutineImport({ close }) {
     anchor.href = url; anchor.download = name; anchor.click()
     URL.revokeObjectURL(url)
   }
-  const updateChoice = (key, value) => setChoices(current => ({ ...current, [key]: value }))
+  const updateChoice = (key, value) => { setChoices(current => ({ ...current, [key]: value })); setError('') }
+  const choicesForName = (name, value) => {
+    const nameKey = name => name.normalize('NFKC').replace(/\s+/g, ' ').trim().toLocaleLowerCase('en')
+    const matches = {}
+    parsed.routines.forEach((routine, ri) => routine.exercises.forEach((item, ei) => {
+      if (nameKey(item.name) === nameKey(name)) matches[ri + ':' + ei] = value
+    }))
+    return matches
+  }
+  const chooseMatch = (key, exercise, value) => {
+    if (value !== 'custom') {
+      setChoices(current => ({ ...current, ...choicesForName(exercise.name, value) }))
+      setError('')
+      return
+    }
+    updateChoice(key, '')
+    customExSheet(null, ex => {
+      setChoices(current => ({ ...current, ...choicesForName(ex.n, ex.id) }))
+      setError('')
+    }, exercise.name)
+  }
   const collisions = parsed ? parsed.routines.filter(r =>
     (st.routines || []).some(existing => existing.name.trim().toLowerCase() === r.name.toLowerCase())) : []
   const scheduleChanges = parsed?.schedule.length ? Array.from({ length: 7 }, (_, day) => {
@@ -2060,9 +2080,13 @@ function RoutineImport({ close }) {
     const after = parsed.schedule.filter(item => item.day === day).map(item => item.routine)
     return { day, before, after }
   }).filter(item => item.before.join('\u0000') !== item.after.join('\u0000')) : []
-  const unresolved = parsed?.routines.some((routine, ri) => routine.exercises.some((exercise, ei) =>
-    exercise.match.status === 'ambiguous' && !choices[ri + ':' + ei]))
+  const unresolved = parsed ? [...new Set(parsed.routines.flatMap((routine, ri) => routine.exercises.flatMap((exercise, ei) =>
+    (choices[ri + ':' + ei] ?? exercise.match.selectedId) ? [] : [exercise.name])))] : []
   const apply = () => {
+    if (unresolved.length) {
+      setError(t('Choose a match or create a custom exercise for: {0}', unresolved.join(', ')))
+      return
+    }
     try {
       update(s => applyRoutineImport(s, parsed, { choices, collision, applySchedule }))
       close()
@@ -2105,7 +2129,7 @@ function RoutineImport({ close }) {
                     ...exerciseOptions.filter(option => !exercise.match.candidates.some(candidate => candidate.id === option.value)),
                     { value: 'custom', label: t('Create custom exercise: {0}', exercise.name) }
                   ]}
-                  onChange={value => updateChoice(key, value)}
+                  onChange={value => chooseMatch(key, exercise, value)}
                   search={{
                     placeholder: t('Search…'), label: t('Search…'), emptyLabel: t('No match'),
                     match: (option, query) => option.value === 'custom' || (query.trim()
@@ -2144,7 +2168,7 @@ function RoutineImport({ close }) {
     </div>
     {error && <div className="small" role="alert" style={{ color: 'var(--red)', margin: '8px 0' }}>{t(error)}</div>}
     <div style={{ height: 10 }} />
-    <Button variant="primary" disabled={!!unresolved || collision === 'cancel'} onClick={apply}>{t('Import routines')}</Button>
+    <Button variant="primary" disabled={collision === 'cancel'} onClick={apply}>{t('Import routines')}</Button>
     <div style={{ height: 8 }} />
     <Button variant="ghost" onClick={() => { setParsed(null); setError('') }}>{t('Back')}</Button>
   </>
