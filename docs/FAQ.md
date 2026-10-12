@@ -88,7 +88,7 @@ invite-only and give yourself an admin dashboard; see
 
 ### I'm moving from another app. Can I bring my history?
 
-FitNotes, Strong and Hevy work out of the box, Apple Health for body weight, and any CSV with a date,
+FitNotes, Strong and Hevy work out of the box, Apple Health XML export files for body weight, and any CSV with a date,
 an exercise and something measured. See [DATA_IMPORTS.md](DATA_IMPORTS.md).
 
 ### Can I reuse the exercise images in my own project?

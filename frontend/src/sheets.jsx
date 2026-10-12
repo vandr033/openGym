@@ -48,8 +48,6 @@ import { workoutsOn, backfillStart, backfillEnd, completeBackfill, historyAsOf, 
 import { moveWorkout, sameWorkout, startTimeOf, durationMinOf, setWorkoutDuration, rebuildPrHistory } from './lib/workout-date.js'
 import { editCompletedSession, editLeftEmpty, editedRecord, editChangesNothing } from './lib/session-edit.js'
 import { stampWorkout } from './lib/sync-merge.js'
-import { candidateHealthWorkouts, linkHealthWorkout, unlinkHealthWorkout } from './lib/health/workoutLink.js'
-import { readHealthView, readHealthCache, refreshHealthRange } from './lib/health/healthService.js'
 import { weeklyWeights } from './lib/bodyweight.js'
 import { workoutText } from './lib/workout-text.js'
 import { copyText } from './lib/clipboard.js'
@@ -1776,14 +1774,6 @@ export const generateDeloadSheet = routineId => ui().openSheet(close => <Generat
 
 function TrainingExport({ close }) {
   const st = useStore(s => s.S)
-  const [health, setHealth] = useState(null)
-  const [healthStatus, setHealthStatus] = useState('loading')
-  useEffect(() => {
-    let live = true
-    readHealthView().then(data => { if (live) { setHealth(data); setHealthStatus('ready') } })
-      .catch(() => { if (live) setHealthStatus('unavailable') })
-    return () => { live = false }
-  }, [])
   const [preset, setPreset] = useState('6w')
   const [range, setRange] = useState(() => trainingPeriod('6w', todayISO()))
   const presets = [
@@ -1795,7 +1785,7 @@ function TrainingExport({ close }) {
     if (value !== 'custom') setRange(trainingPeriod(value, todayISO()))
   }
   const valid = !!range.from && !!range.to && range.from <= range.to
-  const data = useMemo(() => buildTrainingExport(st, range, health), [st, range, health])
+  const data = useMemo(() => buildTrainingExport(st, range), [st, range])
   const json = JSON.stringify(data)
   const aiText = TRAINING_AI_PROMPT + '\n' + JSON.stringify(data, null, 2)
   const csv = trainingExportCSV(data)
@@ -1811,7 +1801,7 @@ function TrainingExport({ close }) {
   const copy = async (value, success) => toast(await copyText(value) ? t(success) : t('Could not copy'))
   return <>
     <h3>{t('Export Training Data for AI')}</h3>
-    <div className="muted small" style={{ marginBottom: 12 }}>{t('A focused training summary. It does not include profile settings or other backup data.')} Connected Apple Health summaries are included in JSON and the AI prompt when available.</div>
+    <div className="muted small" style={{ marginBottom: 12 }}>{t('A focused training summary. It does not include profile settings or other backup data.')}</div>
     <label className="small dim" htmlFor="training-export-preset">{t('Date range')}</label>
     <select id="training-export-preset" className="input" value={preset} onChange={e => setPresetValue(e.target.value)}>
       {presets.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -1823,13 +1813,11 @@ function TrainingExport({ close }) {
     {!valid && <div className="small" role="alert" style={{ color: 'var(--red)', marginTop: 8 }}>{t('The start date must be on or before the end date.')}</div>}
     <div className="small dim" style={{ margin: '8px 2px 12px' }}>
       {t('{0} workouts and {1} bodyweight entries', data.workouts.length, data.bodyWeight.length)}
-      {data.dailyHealth?.length ? ` · ${data.dailyHealth.length} health days` : ''}
-      {healthStatus === 'loading' ? ' · Checking health data…' : healthStatus === 'unavailable' ? ' · Health data unavailable; training only' : ''}
     </div>
-    <Button variant="primary" icon="download" disabled={!valid || healthStatus === 'loading'} onClick={downloadJson}>{t('Download JSON')}</Button>
-    <Button variant="ghost" icon="clipboard" disabled={!valid || healthStatus === 'loading'} onClick={() => copy(json, 'Copied')}>{t('Copy JSON')}</Button>
-    <Button variant="tinted" icon="sparkles" disabled={!valid || healthStatus === 'loading'} onClick={() => copy(aiText, 'Prompt and data copied')}>{t('Copy AI Prompt + Data')}</Button>
-    <Button variant="ghost" icon="download" disabled={!valid || healthStatus === 'loading'} onClick={downloadCsv}>{t('Download CSV')}</Button>
+    <Button variant="primary" icon="download" disabled={!valid} onClick={downloadJson}>{t('Download JSON')}</Button>
+    <Button variant="ghost" icon="clipboard" disabled={!valid} onClick={() => copy(json, 'Copied')}>{t('Copy JSON')}</Button>
+    <Button variant="tinted" icon="sparkles" disabled={!valid} onClick={() => copy(aiText, 'Prompt and data copied')}>{t('Copy AI Prompt + Data')}</Button>
+    <Button variant="ghost" icon="download" disabled={!valid} onClick={downloadCsv}>{t('Download CSV')}</Button>
     <div style={{ height: 8 }} />
     <Button variant="ghost" onClick={close}>{t('Close')}</Button>
   </>
@@ -2015,7 +2003,10 @@ function RoutineImport({ close }) {
   const prompt = [
     'Create a gym routine using the openGym JSON format below.',
     'Return only valid JSON. Do not include Markdown. Do not use internal exercise IDs.',
-    'Use conventional exercise names. Include sets, rep ranges, rest times, progression type, progression step, and notes where appropriate.',
+    'Use conventional exercise names. sets is the planned work-set count; repRange is the target range; restSeconds is the normal rest after a set; progression.step is the load increment. Include these and notes where appropriate.',
+    'Optional warmupSets (0–5) adds that many ramp-up sets before the work sets. Each ramp-up closes half the remaining weight gap; warm-ups do not count as work, volume, records, or progression.',
+    'For drop-sets, use intensifier: {"type":"dropset","count":2,"pct":20}. count is 1–30 and pct is 5–90; each work set gets that many drops, each pct% lighter than the previous one, with no rest between drops.',
+    'For rest-pause, use intensifier: {"type":"restpause","totalReps":12,"restSec":15}. totalReps is 1–100 and restSec is 5–3600 seconds. It replaces the configured set list with one automatic warm-up at the exercise rep target and one work set whose totalReps are split into roughly halving bursts; restSec is the short rest between bursts. Do not combine rest-pause with warmupSets.',
     '',
     template
   ].join('\n')
@@ -2104,6 +2095,13 @@ function RoutineImport({ close }) {
                 <option value="custom">{t('Create custom exercise: {0}', exercise.name)}</option>
               </select>}
             <div className="small dim">{exercise.config.sets} × {exercise.config.repsMin || exercise.config.reps}–{exercise.config.reps}{exercise.config.weight ? ' · ' + exercise.config.weight + ' ' + (st.unit || 'kg') : ''}</div>
+            {(exercise.config.warmupSets || exercise.config.intensifier) && <div className="small dim">
+              {[
+                exercise.config.warmupSets && `${exercise.config.warmupSets} ${t('Warm-up sets')}`,
+                exercise.config.intensifier?.type === 'dropset' && `${t('Drop-set')}: ${exercise.config.intensifier.count} ${t('Drops')}, ${exercise.config.intensifier.pct}%`,
+                exercise.config.intensifier?.type === 'restpause' && `${t('Rest-pause')}: ${exercise.config.intensifier.totalReps} ${t('reps')}, ${exercise.config.intensifier.restSec}s`
+              ].filter(Boolean).join(' · ')}
+            </div>}
           </div>
         })}
       </section>)}
@@ -2452,38 +2450,12 @@ function WorkoutMetricsEdit({ w, close }) {
 
 export const workoutMetricsSheet = w => ui().openSheet(close => <WorkoutMetricsEdit w={w} close={close} />)
 
-async function openHealthWorkoutChooser(w) {
-  let workouts
-  try {
-    if (MOBILE) {
-      const cache = await readHealthCache()
-      if (!cache.requested) { toast(t('Connect Apple Health first')); return }
-      await refreshHealthRange(w.d, w.d)
-      workouts = (await readHealthCache()).workouts || []
-    } else workouts = (await (await import('./lib/api.js')).api('/api/health-data')).workouts || []
-  } catch (error) { toast(t('Could not load Apple Health workouts')); return }
-  const choices = candidateHealthWorkouts(w, workouts, S().workouts)
-  if (!choices.length) { toast(t('No possible Apple Health matches found')); return }
-  menuSheet({ title: t('Link Apple Health Workout'), subtitle: t('Choose the completed workout that matches this session.'),
-    items: choices.map(h => ({ icon: 'heart', label: h.workoutType.replace(/([a-z])([A-Z])/g, '$1 $2'),
-      sub: [new Date(h.startAt).toLocaleString(), fmtDur(h.durationSeconds * 1000), h.activeEnergyKcal != null ? `${h.activeEnergyKcal} active kcal` : null,
-        h.distanceMeters != null ? `${fmtNum(h.distanceMeters / distanceFactor(S()))} ${speedUnitOf(S()) === 'mph' ? 'mi' : 'km'}` : null,
-        h.averageHeartRateBpm != null ? `${h.averageHeartRateBpm} bpm avg` : null,
-        h.maxHeartRateBpm != null ? `${h.maxHeartRateBpm} bpm max` : null].filter(Boolean).join(' · '),
-      onClick: () => {
-        try { update(s => { linkHealthWorkout(s, w, h) }); toast(t('Apple Health workout linked')) }
-        catch (error) { toast(t(error.message)) }
-      } })) })
-}
-
 function WorkoutDetail({ w, close }) {
   const noteRef = useRef(null)
   const onNoteFocus = useSheetKeyboard(noteRef)
   const st = useStore(s => s.S)
-  const user = useStore(s => s.user)
   const update = useStore(s => s.update)
   const savedWorkout = st.workouts.find(x => sameWorkout(x, w)) || w
-  const linked = savedWorkout.appleHealth
   const manual = savedWorkout.manualMetrics || {}
   // The session note is editable here rather than only at the finish sheet: what you want to
   // record about a session is often clearer once you have looked at what you actually did.
@@ -2597,17 +2569,6 @@ function WorkoutDetail({ w, close }) {
     {!w.cardioType && Object.keys(manual).length === 0 && <div style={{ margin: '16px 0' }}>
       <Button icon="chartLine" onClick={() => workoutMetricsSheet(savedWorkout)}>{t('Add workout tracker data')}</Button>
     </div>}
-    {(linked || MOBILE || user) && <div style={{ margin: '16px 0' }}>
-      <div className="small muted" style={{ marginBottom: 6 }}>{t('Apple Health')}</div>
-      {linked ? <>
-        <Row title={t('Duration')} value={fmtDur(linked.durationSeconds * 1000)} />
-        {linked.averageHeartRateBpm != null && <Row title={t('Avg HR')} value={`${linked.averageHeartRateBpm} bpm`} />}
-        {linked.maxHeartRateBpm != null && <Row title={t('Max HR')} value={`${linked.maxHeartRateBpm} bpm`} />}
-        {linked.activeEnergyKcal != null && <Row title={t('Active calories')} value={`${linked.activeEnergyKcal} kcal`} />}
-        {linked.distanceMeters != null && <Row title={t('Distance')} value={`${fmtNum(linked.distanceMeters / distanceFactor(st))} ${speedUnitOf(st) === 'mph' ? 'mi' : 'km'}`} />}
-        <Button onClick={() => update(s => { unlinkHealthWorkout(s, w) })}>{t('Unlink Apple Health Workout')}</Button>
-      </> : <Button icon="link" onClick={() => openHealthWorkoutChooser(w)}>{t('Link Apple Health Workout')}</Button>}
-    </div>}
     <div className="small muted" style={{ margin: '4px 0 6px' }}>{t('Session note')}</div>
     <textarea ref={noteRef} className="input" rows={2} maxLength={NOTE_MAX} value={note}
       placeholder={t('How the session went as a whole.')}
@@ -2716,15 +2677,15 @@ export function WorkoutRow({ w, onClick }) {
   const glyph = w.cardioType ? 'figureRun' : glyphOf((st.routines.find(r => r.id === w.routineId) || {}).emoji)
   const mediaN = workoutMediaCount(w)
   const durationMs = Math.max(0, (w.end || w.start || 0) - (w.start || 0))
-  const distance = w.manualMetrics?.distanceMeters ?? w.appleHealth?.distanceMeters
+  const distance = w.manualMetrics?.distanceMeters
   const metrics = [fmtDate(w.d, true), ...durPart(durationMs)]
   if (w.cardioType) {
     if (distance != null) metrics.push(`${fmtNum(distance / distanceFactor(st))} ${speedUnitOf(st) === 'mph' ? 'mi' : 'km'}`)
-    const calories = w.manualMetrics?.activeEnergyKcal ?? w.appleHealth?.activeEnergyKcal
+    const calories = w.manualMetrics?.activeEnergyKcal
     if (calories != null) metrics.push(`${fmtNum(calories)} kcal`)
   } else {
     metrics.push(t('{0} sets', setsDone(w)), fmtVol(w.vol, st.unit))
-    const calories = w.manualMetrics?.activeEnergyKcal ?? w.appleHealth?.activeEnergyKcal
+    const calories = w.manualMetrics?.activeEnergyKcal
     if (calories != null) metrics.push(`${fmtNum(calories)} kcal`)
   }
   return <div className="item" {...tappable(onClick)}>
@@ -3406,9 +3367,7 @@ export function exitWorkoutEdit(onExit = () => nav('/history')) {
 
 function FinishSummary({ w, prs, e1prs = [], close }) {
   const st = useStore(s => s.S)
-  const user = useStore(s => s.user)
   const latest = st.workouts.find(x => sameWorkout(x, w)) || w
-  const linked = latest.appleHealth
   const metrics = latest.manualMetrics || {}
   return <div style={{ textAlign: 'center', padding: '8px 0' }}>
     <div style={{ fontSize: 44, display: 'flex', justifyContent: 'center', color: 'var(--acc)' }}><Icon name="trophy" /></div>
@@ -3429,16 +3388,6 @@ function FinishSummary({ w, prs, e1prs = [], close }) {
     {/* The moment for a progress photo or the clip of a set: the workout is already saved, so
         what is added here goes straight onto its record. */}
     <div style={{ textAlign: 'start' }}><WorkoutMediaSection w={w} hint /></div>
-    {(linked || MOBILE || user) && <div style={{ textAlign: 'start', margin: '12px 0' }}>
-      {linked ? <>
-        <div className="small muted" style={{ marginBottom: 6 }}>{t('Apple Health')}</div>
-        {linked.durationSeconds != null && <Row title={t('Duration')} value={fmtDur(linked.durationSeconds * 1000)} />}
-        {linked.activeEnergyKcal != null && <Row title={t('Active calories')} value={`${linked.activeEnergyKcal} kcal`} />}
-        {linked.averageHeartRateBpm != null && <Row title={t('Average HR')} value={`${linked.averageHeartRateBpm} bpm`} />}
-        {linked.maxHeartRateBpm != null && <Row title={t('Max HR')} value={`${linked.maxHeartRateBpm} bpm`} />}
-        {linked.distanceMeters != null && <Row title={t('Distance')} value={`${fmtNum(linked.distanceMeters / distanceFactor(st))} ${speedUnitOf(st) === 'mph' ? 'mi' : 'km'}`} />}
-      </> : <Button icon="link" onClick={() => openHealthWorkoutChooser(w)}>{t('Link Apple Health Workout')}</Button>}
-    </div>}
     {!MOBILE && <div style={{ textAlign: 'start', margin: '12px 0' }}>
       {Object.keys(metrics).length > 0 && <>
         <div className="small muted" style={{ marginBottom: 6 }}>{t('Tracker data · manual')}</div>

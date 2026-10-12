@@ -23,7 +23,7 @@ import {
 import { Button, Segmented, SelectRow } from '../components/ui.jsx'
 import { tappable } from '../lib/use-sheet-keyboard.js'
 import { isWarmupRow } from '../lib/workout-model.js'
-import { trainingLoad } from '../lib/health/recoveryContext.js'
+import { trainingLoad } from '../lib/training-load.js'
 
 // Which muscles the training in a window actually hit — and, the point of the card,
 // which ones it keeps missing. Shading is relative within the window (lib/muscles.js).
@@ -488,15 +488,6 @@ export default function Stats() {
         <span className="grow">{t(MUSCLE_NAME[muscle] || muscle)}</span><strong>{fmtNum(sets)}</strong>
       </div>)}
       <div className="small dim" style={{ marginTop: 10 }}>Volume load is logged weight × reps for loaded sets. It is separate from heart rate and active energy.</div>
-      {workouts.some(workout => workout.appleHealth) && <>
-        <div className="small dim" style={{ margin: '16px 0 4px' }}>Linked Apple Health sessions · cardiovascular context</div>
-        {workouts.filter(workout => workout.appleHealth).slice(-3).reverse().map(workout => <div className="recovery-event" key={workout.id || workout.start}>
-          <span className="grow"><strong>{workout.name || t('Workout')}</strong><span className="small dim" style={{ display: 'block' }}>{fmtDate(workout.d, true)}</span></span>
-          <span className="small dim" style={{ textAlign: 'end' }}>{Math.round(workout.appleHealth.durationSeconds / 60)} min
-            {workout.appleHealth.averageHeartRateBpm != null ? ` · ${workout.appleHealth.averageHeartRateBpm} bpm avg` : ''}
-            {workout.appleHealth.activeEnergyKcal != null ? ` · ${workout.appleHealth.activeEnergyKcal} kcal` : ''}</span>
-        </div>)}
-      </>}
     </div>}
     {workouts.length > 0 && <MuscleBalance S={S} />}
     {workouts.length > 0 && <div className="card row between" style={{ alignItems: 'center', gap: 12 }}>

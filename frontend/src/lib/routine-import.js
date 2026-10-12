@@ -2,11 +2,12 @@ import { allExercises, EXIDX, normalizeStr, searchExercises } from './exercises.
 import { bpFromName, matchExercise } from './import-csv.js'
 import { uid } from './format.js'
 import { convertWeight } from './units.js'
+import { MAX_PLANNED_WARMUPS } from './history.js'
 
 export const ROUTINE_FORMAT = 'opengym-routine-v1'
 export const ROUTINE_TEMPLATE = {
   format: ROUTINE_FORMAT,
-  _instructions: 'Use conventional exercise names. Each routine has a name, an exercises list, and optional deload: true. Each exercise uses exercise, sets, repRange min/max, optional weight and weightUnit (kg or lb), restSeconds, progression type and step, and optional notes. Schedule uses weekday names and routine names from this file.',
+  _instructions: 'Use conventional exercise names. Each routine has a name, an exercises list, and optional deload: true. Each exercise uses exercise, sets, repRange min/max, optional weight and weightUnit (kg or lb), warmupSets (0–5 ramp-up sets before work), intensifier (drop-set or rest-pause), restSeconds, progression type and step, and optional notes. Drop-set uses count 1–30 and pct 5–90; it applies that many drops, each pct percent lighter, to every work set. Rest-pause uses totalReps 1–100 and restSec 5–3600; it replaces the set list with one warm-up at the exercise rep target and one work set split into totalReps bursts with restSec between them. Do not combine it with warmupSets. Schedule uses weekday names and routine names from this file.',
   name: 'Upper Lower Hypertrophy',
   schedule: [
     { day: 'monday', routine: 'Upper A' },
@@ -25,6 +26,7 @@ export const ROUTINE_TEMPLATE = {
           repRange: { min: 8, max: 12 },
           weight: 30,
           weightUnit: 'kg',
+          warmupSets: 2,
           restSeconds: 180,
           progression: { type: 'double', step: 2 },
           notes: '2 RIR, controlled eccentric'
@@ -34,6 +36,7 @@ export const ROUTINE_TEMPLATE = {
           sets: 3,
           repRange: { min: 8, max: 12 },
           restSeconds: 120,
+          intensifier: { type: 'dropset', count: 2, pct: 20 },
           progression: { type: 'double', step: 2.5 },
           notes: 'Pause briefly at the chest'
         }
@@ -50,6 +53,7 @@ export const ROUTINE_TEMPLATE = {
           weight: 80,
           weightUnit: 'kg',
           restSeconds: 180,
+          intensifier: { type: 'restpause', totalReps: 12, restSec: 15 },
           progression: { type: 'double', step: 2.5 },
           notes: 'Keep 1–2 reps in reserve'
         }
@@ -137,6 +141,26 @@ function normalizeExercise(source, unit, exercises) {
     if (weight && externalUnit !== unit) weight = convertWeight(weight, externalUnit, unit)
   }
   const restSec = cfg.restSeconds == null ? null : validNumber(cfg.restSeconds, 1, 3600, 'Rest time', true)
+  const warmupSets = cfg.warmupSets == null ? 0 : validNumber(cfg.warmupSets, 0, MAX_PLANNED_WARMUPS, 'Warm-up set count', true)
+  let intensifier
+  if (cfg.intensifier != null) {
+    if (typeof cfg.intensifier !== 'object' || Array.isArray(cfg.intensifier)) throw new Error('Intensifier must be a drop-set or rest-pause object.')
+    const type = String(cfg.intensifier.type || '').toLowerCase()
+    if (type === 'dropset') {
+      intensifier = {
+        type,
+        count: validNumber(cfg.intensifier.count ?? 1, 1, 30, 'Drop count', true),
+        pct: validNumber(cfg.intensifier.pct ?? 20, 5, 90, 'Drop percentage', true)
+      }
+    } else if (type === 'restpause') {
+      if (warmupSets) throw new Error('Rest-pause creates its own warm-up; do not combine it with warmupSets.')
+      intensifier = {
+        type,
+        totalReps: validNumber(cfg.intensifier.totalReps ?? max, 1, 100, 'Rest-pause total reps', true),
+        restSec: validNumber(cfg.intensifier.restSec ?? 15, 5, 3600, 'Rest-pause rest time', true)
+      }
+    } else throw new Error('Unsupported intensifier type: ' + type)
+  }
   const progressionType = String(cfg.progression?.type || (range.min != null ? 'double' : 'linear')).toLowerCase()
   const progression = ({ double: 'double', 'double progression': 'double', linear: 'linear', greyskull: 'greyskull', off: 'off', none: 'off' })[progressionType]
   if (!progression) throw new Error('Unsupported progression type: ' + progressionType)
@@ -148,6 +172,8 @@ function normalizeExercise(source, unit, exercises) {
     sets, reps: max, ...(min < max ? { repsMin: min } : {}),
     ...(weight != null ? { weight } : {}),
     ...(restSec != null ? { restSec } : {}),
+    ...(warmupSets ? { warmupSets } : {}),
+    ...(intensifier ? { intensifier } : {}),
     ...(progression ? { prog: progression } : {}),
     ...(step != null ? { inc: step } : {}),
     ...(cleanName(cfg.notes) ? { note: cleanName(cfg.notes).slice(0, 500) } : {})

@@ -109,6 +109,15 @@ test('GET /api/admin/user leaves a workout\'s photos and videos out', async t =>
   assert.equal(JSON.stringify(r.body).includes('a'.repeat(64)), false);
 });
 
+test('GET /api/admin/user omits legacy workout health metadata', async t => {
+  const h = await startServer(t);
+  h.plant({ workouts: [{ ...okW, appleHealth: { externalId: 'old-health-id', averageHeartRateBpm: 128 } }], routines: [okR], bodyweight: [okB], unit: 'kg' });
+  const r = await h.get(`/api/admin/user?id=${VICTIM}`);
+  assert.equal(r.status, 200);
+  assert.equal('appleHealth' in r.body.workouts[0], false);
+  assert.equal(JSON.stringify(r.body).includes('old-health-id'), false);
+});
+
 test('the user list and the disable switch survive the same document', async t => {
   const h = await startServer(t);
   for (const [what, doc] of Object.entries(DOCS)) {

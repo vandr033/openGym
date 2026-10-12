@@ -5,7 +5,7 @@
 > multi-device sync, PWA). No account required, no cloud, no telemetry.
 
 ## Docs
-- [Complete reference](https://opengym.duarte-santos.ch/docs.html): every feature, self-hosting, every .env setting, AI Coach, imports (FitNotes/Strong/Hevy/Apple Health), backups, MCP server, troubleshooting
+- [Complete reference](https://opengym.duarte-santos.ch/docs.html): every feature, self-hosting, every .env setting, AI Coach, imports (FitNotes/Strong/Hevy/Apple Health XML exports), backups, MCP server, troubleshooting
 - [HTTP API](https://opengym.duarte-santos.ch/api.html): OpenAPI spec, also at [openapi.yaml](https://opengym.duarte-santos.ch/openapi.yaml)
 - [README](https://raw.githubusercontent.com/DuarteSantos8/openGym/main/README.md): project overview in Markdown
 - [Documentation index](https://github.com/DuarteSantos8/openGym/blob/main/docs/README.md): every guide by audience, plus an [FAQ](https://raw.githubusercontent.com/DuarteSantos8/openGym/main/docs/FAQ.md)

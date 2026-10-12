@@ -49,7 +49,7 @@ vi.mock('../lib/api.js', () => ({
 }))
 vi.mock('../lib/push.js', () => ({ pushSupported: () => false, enablePush: vi.fn(), disablePush: vi.fn(), sendTestPush: vi.fn() }))
 vi.mock('../lib/wakelock.js', () => ({ wakeLockSupported: () => false }))
-vi.mock('../lib/mobile.js', () => ({ MOBILE: false, isAndroid: () => Promise.resolve(false), shareExport: vi.fn(), syncReminder: vi.fn() }))
+vi.mock('../lib/mobile.js', () => ({ MOBILE: true, isAndroid: () => Promise.resolve(false), shareExport: vi.fn(), syncReminder: vi.fn() }))
 vi.mock('../lib/coach-api.js', () => ({ forgetCoach: (...a) => mocks.forgetCoach(...a) }))
 vi.mock('./MobileOnboarding.jsx', () => ({ ConnectSheet: () => null }))
 vi.mock('../sheets.jsx', () => ({
@@ -159,5 +159,11 @@ describe('Settings — footer', () => {
     mount()
     const link = [...host.querySelectorAll('a')].find(a => a.textContent === 'source code')
     expect(link.getAttribute('href')).toBe('https://github.com/DuarteSantos8/openGym')
+  })
+
+  it('does not show a native Apple Health settings control on mobile', () => {
+    mount()
+    const appleHealthRow = [...host.querySelectorAll('.lrow')].find(row => row.textContent.trim().startsWith('Apple Health'))
+    expect(appleHealthRow).toBeUndefined()
   })
 })

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useStore } from '../store/useStore.js'
 import { effectiveRoutines, effectiveRoutineIds, nextTrainingDay, streakWeeks, lastBW, setsDoneActive } from '../lib/history.js'
@@ -10,10 +10,7 @@ import Icon from '../components/Icon.jsx'
 import { Button } from '../components/ui.jsx'
 import { tappable } from '../lib/use-sheet-keyboard.js'
 import { glyphOf } from '../lib/glyphs.js'
-import { activeProgramContext, addDays, daysBetween } from '../lib/programs.js'
-import { healthAvailability, readHealthCache, readHealthView, requestHealthAccess, refreshHealthRange } from '../lib/health/healthService.js'
-import { metricBaseline, recoveryMessages } from '../lib/health/recoveryContext.js'
-import { MOBILE } from '../lib/mobile.js'
+import { activeProgramContext, daysBetween } from '../lib/programs.js'
 
 // Home = what to do now + a quick glance. Deep charts & history live in Stats.
 export default function Home() {
@@ -21,32 +18,6 @@ export default function Home() {
   const S = useStore(s => s.S)
   const user = useStore(s => s.user)
   const [weekOffset, setWeekOffset] = useState(0)
-  const [health, setHealth] = useState(null)
-  const [healthError, setHealthError] = useState('')
-  useEffect(() => {
-    if (!user && !MOBILE) return
-    let live = true
-    const loadHealth = async () => {
-      const [available, data] = await Promise.all([
-        MOBILE ? healthAvailability().catch(error => { console.error('[HealthKit] Home availability failed:', error); return false }) : false,
-        readHealthView(),
-      ])
-      console.info('[HealthKit] Home health data loaded', { available, requested: !!data.requested, summaryDays: Object.keys(data.summaries || {}).length, workouts: (data.workouts || []).length })
-      if (live) setHealth({ ...data, available })
-    }
-    loadHealth().catch(error => { console.error('[HealthKit] Home health load failed:', error); if (live) setHealthError(error.message) })
-    return () => { live = false }
-  }, [user?.id])
-
-  const connectHealth = async () => {
-    setHealthError('')
-    try {
-      await requestHealthAccess()
-      const to = todayISO()
-      await refreshHealthRange(addDays(to, -29), to)
-      setHealth({ ...(await readHealthCache()), available: true })
-    } catch (error) { console.error('[HealthKit] Home connect failed:', error); setHealthError(error.message) }
-  }
 
   const today = new Date()
   // A weekday can hold several routines. `todayRoutines` is the whole day; `routine` is the
@@ -95,8 +66,6 @@ export default function Home() {
   // Days scheduled, not routines — a combined day counts as 1, matching wThisWeek (one w).
   const plannedPerWeek = Object.values(S.week).filter(ids => ids?.length).length
   const bwPoints = S.bodyweight.slice(-30).map(b => ({ t: b.t || new Date(b.d).getTime(), y: b.w, d: b.d }))
-  const healthToday = health?.summaries?.[todayISO()]
-  const healthMessages = recoveryMessages(health?.summaries, todayISO())
   const waterToday = (S.water || []).filter(entry => isoOf(new Date(entry.t)) === todayISO())
   const waterMl = waterToday.reduce((sum, entry) => sum + (Number(entry.ml) || 0), 0)
   const waterGoal = S.waterGoalMl || 2000
@@ -157,41 +126,6 @@ export default function Home() {
       </div>}
     </div>
 
-    {(MOBILE || health?.remote) && <div className="card">
-      <div className="row between" style={{ marginBottom: 10 }}><h2 style={{ margin: 0 }}>Activity &amp; recovery</h2>
-        <Button size="sm" variant="ghost" trailingIcon="chevronRight" onClick={() => nav('/health')}>Health</Button></div>
-      {!health?.requested && health?.available && <div className="row between" style={{ gap: 10 }}>
-        <div className="small dim">Connect Apple Health to see activity and workout readings here.</div>
-        <Button size="sm" variant="primary" onClick={connectHealth}>Connect</Button>
-      </div>}
-      {health?.available === false && !health?.remote && <div className="small dim">Apple Health is available on supported iPhones.</div>}
-      {health === null && <div className="small dim">Checking Apple Health…</div>}
-      {healthError && <div role="alert" className="small" style={{ color: 'var(--red)', marginTop: 8 }}>{healthError}</div>}
-      {health?.requested && healthToday && Object.keys(healthToday).length > 1 ? <>
-        <div className="recovery-grid home-health-grid">
-          {[
-            ['Steps', 'steps', value => value.toLocaleString()],
-            ['Active calories', 'activeEnergyKcal', value => `${value} kcal`],
-            ['Total calories', 'totalEnergyKcal', value => `${value} kcal`],
-            ['Exercise', 'exerciseMinutes', value => `${value} min`],
-            ['Move time', 'moveMinutes', value => `${value} min`],
-            ['Stand time', 'standMinutes', value => `${value} min`],
-            ['Sleep', 'sleepMinutes', value => `${Math.floor(value / 60)}h ${Math.round(value % 60)}m`],
-            ['HRV', 'hrvSdnnMs', value => `${value} ms`],
-            ['Resting HR', 'restingHeartRateBpm', value => `${value} bpm`],
-            ['Body weight', 'bodyWeightKg', value => `${value} kg`],
-          ].map(([label, field, format]) => {
-            const baseline = metricBaseline(health.summaries, todayISO(), field)
-            return <div key={field}><span className="small dim">{label}</span><strong>{baseline.today == null ? '—' : format(baseline.today)}</strong>
-              {baseline.delta30 != null && <span className="small dim">{baseline.delta30 > 0 ? '+' : ''}{Math.round(baseline.delta30 * 10) / 10} vs 30d · {baseline.count30}d</span>}</div>
-          })}
-        </div>
-        {todayRoutines.length > 0 && healthMessages.some(message => message.startsWith('Sleep duration was below') || message.startsWith('HRV is below') || message.startsWith('Resting heart rate is above')) && <div className="small dim" style={{ marginTop: 12 }}>
-          {healthMessages.filter(message => message.startsWith('Sleep duration was below') || message.startsWith('HRV is below') || message.startsWith('Resting heart rate is above')).join(' ')} Consider keeping today’s planned loads rather than forcing progression. Your plan is unchanged.
-        </div>}
-      </> : health?.requested && <div className="small dim">No health readings for today yet. Open Health to refresh.</div>}
-    </div>}
-
     <div className="card">
       <div className="row between" style={{ marginBottom: 10 }}><h2 style={{ margin: 0 }}>Water</h2>
         <Button size="sm" variant="ghost" trailingIcon="chevronRight" onClick={waterTrackingSheet}>Track water</Button></div>
@@ -199,7 +133,6 @@ export default function Home() {
         <strong style={{ fontSize: 24 }}>{waterMl.toLocaleString()} ml</strong>
         <span className="small dim">of {waterGoal.toLocaleString()} ml</span>
       </div>
-      {healthToday?.dietaryWaterMl != null && <div className="small dim" style={{ marginTop: 4 }}>Apple Health: {Math.round(healthToday.dietaryWaterMl).toLocaleString()} ml</div>}
       <div role="progressbar" aria-label={t('Water goal')} aria-valuenow={Math.min(waterMl, waterGoal)} aria-valuemin={0} aria-valuemax={waterGoal}
         style={{ height: 6, borderRadius: 99, overflow: 'hidden', background: 'var(--surface-3)', margin: '10px 0 12px' }}>
         <div style={{ width: `${Math.min(100, waterMl / waterGoal * 100)}%`, height: '100%', background: 'var(--teal)' }} />

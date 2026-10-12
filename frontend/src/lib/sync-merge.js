@@ -48,7 +48,7 @@
  *     time), gym cards, equipment profiles, favourites, notes, bar weights and the stamped
  *     settings maps — of this device's copy and of the server's (resetIdsOf). A copy that has not
  *     seen that reset (an older or no `resetAt`) loses exactly those entries and keeps everything
- *     else, whatever its dates say: a CSV or Apple Health import of old sessions, a device whose
+ *     else, whatever its dates say: a manual import of old sessions, a device whose
  *     clock runs behind, an entry with no date at all (sinceReset). Only a reset stamped before
  *     `resetIds` existed falls back to judging by time. The reset copy's settings and plan win
  *     whatever the `_ts`. `resetAt` only ever moves forward: the merge keeps the later one (with
@@ -361,15 +361,6 @@ export function mergeStates(a0, b0, { prefer } = {}) {
       const x = nBy.get(key), y = oBy.get(key)
       if (x && y) { mergeWorkoutMedia(w, x); mergeWorkoutMedia(w, y) }
     }
-  }
-  // Two devices can choose the same HealthKit UUID before either sees the other's link.
-  // Keep the later link and stamp the removal so a later merge does not bring it back.
-  const linked = new Set()
-  for (const w of [...out.workouts].sort((x, y) => (y._ts || 0) - (x._ts || 0))) {
-    const id = w.appleHealth?.externalId
-    if (!id) continue
-    if (linked.has(id)) { delete w.appleHealth; stampWorkout(w, Math.max(Date.now(), (w._ts || 0) + 1)) }
-    else linked.add(id)
   }
   out.workouts.sort(byDayStart)
   for (const f of ['routines', 'programs', 'customEx', 'equipProfiles', 'gymCards']) {

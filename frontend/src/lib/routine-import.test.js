@@ -31,6 +31,38 @@ describe('ChatGPT-friendly routine JSON', () => {
     expect(parsed.routines[0].exercises[0].config.inc).toBe(5.5)
   })
 
+  it('imports warm-ups, drop-sets and rest-pause into the existing exercise plan fields', () => {
+    const data = source()
+    data.routines[0].exercises = [
+      { exercise: 'Bench Press', sets: 3, reps: 8, warmupSets: 2, intensifier: { type: 'dropset', count: 2, pct: 20 } },
+      { exercise: 'Lat Pulldown', sets: 3, reps: 8, intensifier: { type: 'restpause', totalReps: 12, restSec: 15 } }
+    ]
+    const parsed = parseRoutineImport(data)
+    expect(parsed.routines[0].exercises.map(item => item.config)).toEqual([
+      { sets: 3, reps: 8, prog: 'linear', warmupSets: 2, intensifier: { type: 'dropset', count: 2, pct: 20 } },
+      { sets: 3, reps: 8, prog: 'linear', intensifier: { type: 'restpause', totalReps: 12, restSec: 15 } }
+    ])
+    const state = { unit: 'kg', routines: [], customEx: [], week: {} }
+    const choices = Object.fromEntries(parsed.routines.flatMap((routine, ri) => routine.exercises.map((item, ei) => [`${ri}:${ei}`, item.match.selectedId])))
+    applyRoutineImport(state, parsed, { choices, idFactory: fixedId })
+    expect(state.routines[0].ex.map(({ warmupSets, intensifier }) => ({ warmupSets, intensifier }))).toEqual([
+      { warmupSets: 2, intensifier: { type: 'dropset', count: 2, pct: 20 } },
+      { warmupSets: undefined, intensifier: { type: 'restpause', totalReps: 12, restSec: 15 } }
+    ])
+  })
+
+  it('rejects unsupported or incompatible set options', () => {
+    const data = source()
+    data.routines[0].exercises[0].warmupSets = 6
+    expect(() => parseRoutineImport(data)).toThrow('Warm-up set count')
+    data.routines[0].exercises[0].warmupSets = 1
+    data.routines[0].exercises[0].intensifier = { type: 'restpause', totalReps: 12 }
+    expect(() => parseRoutineImport(data)).toThrow('do not combine')
+    data.routines[0].exercises[0].warmupSets = 0
+    data.routines[0].exercises[0].intensifier = { type: 'unknown' }
+    expect(() => parseRoutineImport(data)).toThrow('Unsupported intensifier type')
+  })
+
   it('rejects invalid JSON, unknown formats, and invalid schedule references', () => {
     expect(() => parseRoutineImport('{')).toThrow('valid JSON')
     expect(() => parseRoutineImport({ ...source(), format: 'wrong' })).toThrow(ROUTINE_FORMAT)

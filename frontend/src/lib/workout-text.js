@@ -16,17 +16,16 @@ import { t, exerciseNameClass } from './i18n-core.js'
  */
 export function workoutText(w, { unit, nameOf, speedUnit }) {
   const manual = w.manualMetrics || {}
-  const health = w.appleHealth || {}
   const duration = Math.max(0, (w.end || 0) - (w.start || 0))
-  const distanceMeters = manual.distanceMeters ?? health.distanceMeters
+  const distanceMeters = manual.distanceMeters
   const facts = [
     ...durPart(duration),
     ...(!w.cardioType ? [fmtVol(w.vol ?? workoutVolume(w), unit)] : []),
     ...(distanceMeters != null ? [`${fmtNum(distanceMeters / (speedUnit === 'mph' ? 1609.344 : 1000))} ${speedUnit === 'mph' ? 'mi' : 'km'}`] : []),
-    ...((manual.activeEnergyKcal ?? health.activeEnergyKcal) != null ? [`${fmtNum(manual.activeEnergyKcal ?? health.activeEnergyKcal)} active kcal`] : []),
+    ...(manual.activeEnergyKcal != null ? [`${fmtNum(manual.activeEnergyKcal)} active kcal`] : []),
     ...(manual.totalEnergyKcal != null ? [`${fmtNum(manual.totalEnergyKcal)} total kcal`] : []),
-    ...((manual.averageHeartRateBpm ?? health.averageHeartRateBpm) != null ? [`Avg HR ${fmtNum(manual.averageHeartRateBpm ?? health.averageHeartRateBpm)} bpm`] : []),
-    ...((manual.maxHeartRateBpm ?? health.maxHeartRateBpm) != null ? [`Max HR ${fmtNum(manual.maxHeartRateBpm ?? health.maxHeartRateBpm)} bpm`] : []),
+    ...(manual.averageHeartRateBpm != null ? [`Avg HR ${fmtNum(manual.averageHeartRateBpm)} bpm`] : []),
+    ...(manual.maxHeartRateBpm != null ? [`Max HR ${fmtNum(manual.maxHeartRateBpm)} bpm`] : []),
     ...(w.bw ? [t('Body weight') + ' ' + fmtNum(w.bw) + ' ' + unit] : []),
   ]
   const blocks = [[[w.name, fmtDate(w.d, true, true)].filter(Boolean).join(' — '), facts.join(' · ')].join('\n')]

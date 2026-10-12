@@ -60,7 +60,7 @@ function trainingExercise(state, entry) {
   }
 }
 
-export function buildTrainingExport(state, period, health = null) {
+export function buildTrainingExport(state, period) {
   const workouts = (state.workouts || [])
     .filter(workout => dateInPeriod(workout.d, period))
     .slice()
@@ -78,29 +78,8 @@ export function buildTrainingExport(state, period, health = null) {
       ...(workout.manualMetrics ? { manualMetrics: workout.manualMetrics } : {}),
       sessionNote: workout.note || null,
       readiness: workout.readiness || null,
-      ...(workout.appleHealth ? { appleHealth: {
-        durationSeconds: workout.appleHealth.durationSeconds,
-        averageHeartRateBpm: workout.appleHealth.averageHeartRateBpm ?? null,
-        activeEnergyKcal: workout.appleHealth.activeEnergyKcal ?? null,
-        ...(workout.appleHealth.distanceMeters != null ? { distanceMeters: workout.appleHealth.distanceMeters } : {}),
-        ...(workout.appleHealth.maxHeartRateBpm != null ? { maxHeartRateBpm: workout.appleHealth.maxHeartRateBpm } : {}),
-      } } : {}),
       prs: workout.prs || [],
       exercises: (workout.entries || []).map(entry => trainingExercise(state, entry)),
-    }))
-  const dailyHealth = Object.values(health?.summaries || {}).filter(day => dateInPeriod(day.date, period) && Object.keys(day).some(key => !['date', 'source', 'importedAt'].includes(key)))
-    .sort((a, b) => a.date.localeCompare(b.date)).map(day => ({
-      date: day.date,
-      health: {
-        ...(day.sleep ? Object.fromEntries([
-          ['sleepMinutes', day.sleep.totalMinutes], ['inBedMinutes', day.sleep.inBedMinutes], ['awakeMinutes', day.sleep.awakeMinutes],
-          ['coreSleepMinutes', day.sleep.coreMinutes], ['deepSleepMinutes', day.sleep.deepMinutes], ['remSleepMinutes', day.sleep.remMinutes],
-        ].filter(([, value]) => value != null)) : {}),
-        ...Object.fromEntries(['hrvSdnnMs', 'restingHeartRateBpm', 'walkingHeartRateBpm', 'vo2MaxMlPerKgMin', 'walkingSpeedMetersPerSecond',
-          'steps', 'activeEnergyKcal', 'basalEnergyKcal', 'totalEnergyKcal', 'exerciseMinutes', 'moveMinutes', 'standMinutes', 'flightsClimbed',
-          'distanceWalkingRunningMeters', 'distanceCyclingMeters', 'distanceSwimmingMeters', 'dietaryWaterMl', 'bodyWeightKg']
-          .filter(key => day[key] != null).map(key => [key, day[key]])),
-      },
     }))
   return {
     format: TRAINING_EXPORT_FORMAT,
@@ -108,7 +87,6 @@ export function buildTrainingExport(state, period, health = null) {
     unit: state.unit || 'kg',
     bodyWeight: (state.bodyweight || []).filter(item => dateInPeriod(item.d, period))
       .map(item => ({ date: item.d, weight: item.w, unit: state.unit || 'kg' })),
-    ...(dailyHealth.length ? { dailyHealth } : {}),
     workouts,
   }
 }

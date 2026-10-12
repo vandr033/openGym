@@ -21,7 +21,7 @@ const mintSession = uid => {
 };
 const ADMIN = 'u_adm_1', ADMIN2 = 'u_adm_2', VICTIM = 'u_vic_1';
 const as = uid => ({ Cookie: `gymsid=${mintSession(uid)}`, 'Content-Type': 'application/json' });
-async function startServer(t, { twoAdmins = false } = {}) {
+async function startServer(t, { twoAdmins = false, legacyHealth = false } = {}) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gym-del-'));
   fs.writeFileSync(path.join(dataDir, 'secret'), SECRET, { mode: 0o600 });
   const users = [
@@ -36,6 +36,7 @@ async function startServer(t, { twoAdmins = false } = {}) {
     invites: [{ code: 'CODE1', usedBy: VICTIM, usedAt: new Date().toISOString() }],
   }));
   fs.writeFileSync(path.join(dataDir, `state-${VICTIM}.json`), JSON.stringify({ unit: 'kg', workouts: [], _rev: 3 }));
+  if (legacyHealth) fs.writeFileSync(path.join(dataDir, `health-${VICTIM}.json`), JSON.stringify({ daily: [], workouts: [] }));
   const child = spawn(process.execPath, ['server.js'], {
     cwd: API, stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, PORT: '0', DATA_DIR: dataDir, ORIGIN: 'http://localhost:8080', RP_ID: 'localhost' },
@@ -72,6 +73,16 @@ test('removes the account and everything attached to it', async t => {
   // an invite-only instance.
   assert.equal(db.invites[0].usedBy, VICTIM);
   assert.equal(h.stackFrames(), 0, `no stack traces:\n${h.log}`);
+});
+
+test('leaves legacy health files until profile deletion and no longer serves the health API', async t => {
+  const h = await startServer(t, { legacyHealth: true });
+  const legacyFile = path.join(h.dataDir, `health-${VICTIM}.json`);
+  assert.ok(fs.existsSync(legacyFile), 'server startup leaves old health data untouched');
+  for (const method of ['GET', 'PUT'])
+    assert.equal((await fetch(`${h.api}/api/health-data`, { method })).status, 404, `${method} is no longer served`);
+  assert.equal((await h.del(VICTIM)).status, 200);
+  assert.equal(fs.existsSync(legacyFile), false, 'profile deletion removes its legacy health file');
 });
 
 test('their session stops working immediately', async t => {

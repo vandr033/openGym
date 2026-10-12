@@ -72,16 +72,13 @@ describe('AI training export', () => {
     expect(TRAINING_AI_PROMPT).toContain('Do not make medical diagnoses.')
   })
 
-  it('includes compact daily health and linked workout context only within the selected period', () => {
+  it('ignores legacy health linkage metadata without changing stored workout history', () => {
     const S = state()
     S.workouts[1].appleHealth = { durationSeconds: 3500, averageHeartRateBpm: 128, activeEnergyKcal: 400, externalId: 'hk-1' }
-    const health = { summaries: {
-      '2026-08-31': { date: '2026-08-31', steps: 100 },
-      '2026-09-12': { date: '2026-09-12', sleep: { totalMinutes: 450, deepMinutes: 60, remMinutes: 90 }, hrvSdnnMs: 55, steps: 8000 },
-    } }
-    const data = buildTrainingExport(S, period, health)
-    expect(data.dailyHealth).toEqual([{ date: '2026-09-12', health: { sleepMinutes: 450, deepSleepMinutes: 60, remSleepMinutes: 90, hrvSdnnMs: 55, steps: 8000 } }])
-    expect(data.workouts[0].appleHealth).toEqual({ durationSeconds: 3500, averageHeartRateBpm: 128, activeEnergyKcal: 400 })
+    const data = buildTrainingExport(S, period)
+    expect(data).not.toHaveProperty('dailyHealth')
+    expect(data.workouts[0]).not.toHaveProperty('appleHealth')
+    expect(S.workouts[1].appleHealth.externalId).toBe('hk-1')
     expect(TRAINING_AI_PROMPT).toContain('Do not imply causation')
   })
 

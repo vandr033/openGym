@@ -33,6 +33,7 @@ The stable format identifier is `opengym-routine-v1`. Its shape is:
           "repRange": { "min": 8, "max": 12 },
           "weight": 30,
           "weightUnit": "kg",
+          "warmupSets": 2,
           "restSeconds": 180,
           "progression": { "type": "double", "step": 2 },
           "notes": "2 RIR, controlled eccentric"
@@ -50,6 +51,7 @@ The stable format identifier is `opengym-routine-v1`. Its shape is:
           "weight": 80,
           "weightUnit": "kg",
           "restSeconds": 180,
+          "intensifier": { "type": "restpause", "totalReps": 12, "restSec": 15 },
           "progression": { "type": "double", "step": 2.5 },
           "notes": "Leave 1–2 reps in reserve"
         }
@@ -70,16 +72,35 @@ exercises. There can be 1–16 routines. Exercise values are:
 | `repRange` | `{ "min": 8, "max": 12 }`; `reps` can be used for one fixed target |
 | `weight` | Optional starting load |
 | `weightUnit` | `kg` or `lb`; if omitted, the profile's current unit is used |
+| `warmupSets` | Optional integer from 0–5; adds ramp-up sets before work, excluded from volume, records and progression |
 | `restSeconds` | Optional rest duration from 1 to 3600 seconds |
 | `progression` | `double`, `linear`, `greyskull`, or `off`; `step` is the load increment |
+| `intensifier` | Optional `{"type":"dropset","count":2,"pct":20}` or `{"type":"restpause","totalReps":12,"restSec":15}`; details below |
 | `notes` | Optional plain-text exercise note |
 | routine `deload` | `true` excludes the routine's exercises from normal progression |
+
+`warmupSets` creates up to five ramp-up sets before the work sets. Each ramp closes half the
+remaining gap to the work weight, and warm-ups do not count as work, volume, records or progression.
+A drop-set uses `count` from 1–30 and `pct` from 5–90. It applies that many drops to **every** work
+set; each drop is `pct` percent lighter than the previous load, with no rest between drops.
+Rest-pause uses `totalReps` from 1–100 and `restSec` from 5–3600 seconds. It replaces the configured
+set list with one automatic warm-up at the exercise's rep target and one work set. `totalReps` is the
+work set's total, split into roughly halving bursts that sum to that number; `restSec` is the brief
+rest between bursts. Do not combine rest-pause with `warmupSets`; rest-pause provides its own
+warm-up. The `sets` value is unused for rest-pause exercises.
 
 For example, this is a prompt you can paste into ChatGPT:
 
 > Create a gym routine using the openGym JSON format below. Return only valid JSON. Do not include
 > Markdown or internal exercise IDs. Use conventional exercise names. Include sets, rep ranges,
-> rest times, progression type, progression step and notes where appropriate.
+> rest times, progression type, progression step and notes where appropriate. `warmupSets` (0–5)
+> adds ramp-up sets before work; they do not count as work, volume, records or progression. A
+> drop-set uses `intensifier: {"type":"dropset","count":2,"pct":20}` (`count` 1–30, `pct` 5–90)
+> and adds that many no-rest, progressively lighter drops to every work set. Rest-pause uses
+> `intensifier: {"type":"restpause","totalReps":12,"restSec":15}` (`totalReps` 1–100,
+> `restSec` 5–3600 seconds); it replaces the set list with one automatic warm-up and one work set
+> split into short bursts summing to `totalReps`, with `restSec` between bursts. Do not combine
+> rest-pause with `warmupSets`.
 
 Use the full example above as the format reference, then add your training goal, available days,
 equipment and preferences.
