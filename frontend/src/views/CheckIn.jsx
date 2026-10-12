@@ -72,7 +72,7 @@ export default function CheckIn() {
     <div className="hdr">
       <button className="iconbtn" onClick={() => nav('/home')} aria-label={t('Home')}><Icon name="chevronLeft" /></button>
       <div style={{ flex: 1 }}>
-        <h1 style={{ fontSize: 28 }}>{t('Check in')}</h1>
+        <h1 style={{ fontSize: 28 }}>{t('Gym check-in')}</h1>
         <div className="sub">{cards.length ? t('Show this at the gym') : t('Add your gym card')}</div>
       </div>
     </div>

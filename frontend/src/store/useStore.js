@@ -74,7 +74,7 @@ const gainedWorkoutMedia = (prev, next) => {
 export const DEF = {
   unit: 'kg', restSec: 90, restPauseSec: 15, sound: true, soundOnSilent: false, timerFlash: false, timedSetOvertime: false, keepAwake: true, lang: 'en',
   theme: 'dark', accent: 'lime', body: 'male', targetW: null,
-  bodyweight: [], water: [], waterGoalMl: 2000, routines: [], programs: [], activeProgramId: null, week: {}, dayPlan: {},
+  bodyweight: [], water: [], waterGoalMl: 2000, dailyHabits: [], habitLogs: [], routines: [], programs: [], activeProgramId: null, week: {}, dayPlan: {},
   exWeights: {}, workouts: [], active: null, customEx: [], gifSize: 'full',
   // Stats activity heatmap metric. Profiles without this key continue to open on time.
   heatmapMetric: 'time',
@@ -151,6 +151,8 @@ export const DEF = {
   // entries, Stats, imports and the separate pre-workout weigh-in flow keep working.
   // Defaults on; an older profile without the key reads as on (`!== false`).
   showWeightCard: true,
+  showWaterCard: true,
+  showDailyHabits: true,
   // Whether Start opens the quick weigh-in first (sheets.jsx startFlow, issue #137). Off starts
   // the session straight away; weight can still be logged from Home/Stats. Defaults on; an
   // older profile without the key reads as on (`!== false`).
@@ -222,7 +224,7 @@ function loadState() {
 // weigh-ins and custom exercises. A custom exercise is all a new guest may have made — with its
 // photo or video, which the server counts as unreferenced until the state that names it lands —
 // so a profile created from such a copy takes it at once, like one holding a workout.
-const hasData = st => !!((st.workouts || []).length || (st.routines || []).length || (st.programs || []).length || (st.bodyweight || []).length || (st.water || []).length || (st.customEx || []).length)
+const hasData = st => !!((st.workouts || []).length || (st.routines || []).length || (st.programs || []).length || (st.bodyweight || []).length || (st.water || []).length || (st.customEx || []).length || (st.dailyHabits || []).length || (st.habitLogs || []).length)
 
 // Decide whether a pulled account state may replace the local saved state. A local active workout
 // is deliberately carried forward: the server stores completed/saved state, while the in-progress
@@ -779,7 +781,7 @@ export const useStore = create((set, get) => {
     reached()
     let asked = false
     const askAbout = async extras => {
-      if (!(extras.workouts || extras.bodyweight || extras.customEx || extras.water) || typeof ask !== 'function') return false
+      if (!(extras.workouts || extras.bodyweight || extras.customEx || extras.water || extras.dailyHabits) || typeof ask !== 'function') return false
       asked = true
       return !!(await ask(extras))
     }
@@ -866,10 +868,13 @@ export const useStore = create((set, get) => {
     await applyStash()
     return { adopted: true, added: false }
   }
-  // A copy's workouts, weigh-ins and custom exercises split by the names a sign-in recorded when it
+  // A copy's workouts, weigh-ins, habits and custom exercises split by the names a sign-in recorded when it
   // began (`pre`, see setUser): `before` holds what was there then, `later` — null when nothing
   // is — what was logged since, with the custom exercises its workouts use, in this copy's unit.
-  const ADOPT_FIELDS = ['workouts', 'bodyweight', 'customEx', 'water']
+  const ADOPT_FIELDS = ['workouts', 'bodyweight', 'customEx', 'water', 'dailyHabits', 'habitLogs']
+  const adoptEntryKey = (field, entry) => field === 'dailyHabits'
+    ? `${entryKey(field, entry)}|${entry?._ts || 0}`
+    : field === 'habitLogs' ? `${entryKey(field, entry)}|${entry?.t || 0}` : entryKey(field, entry)
   const splitByPre = (S, pre) => {
     const before = { ...S }
     const later = { _ts: S._ts, unit: S.unit, ...(S.unitSet ? { unitSet: S.unitSet } : {}) }
@@ -877,8 +882,8 @@ export const useStore = create((set, get) => {
     for (const f of ADOPT_FIELDS) {
       const had = new Set(Array.isArray(pre?.[f]) ? pre[f] : [])
       const xs = Array.isArray(S[f]) ? S[f].filter(x => x != null) : []
-      before[f] = xs.filter(x => had.has(entryKey(f, x)))
-      later[f] = xs.filter(x => !had.has(entryKey(f, x)))
+      before[f] = xs.filter(x => had.has(adoptEntryKey(f, x)))
+      later[f] = xs.filter(x => !had.has(adoptEntryKey(f, x)))
       if (later[f].length) any = true
     }
     if (!any) return { before, later: null }
@@ -887,8 +892,7 @@ export const useStore = create((set, get) => {
     return { before, later }
   }
   const preOf = S => {
-    const ids = resetIdsOf(S)
-    return Object.fromEntries(ADOPT_FIELDS.map(f => [f, ids[f] || []]))
+    return Object.fromEntries(ADOPT_FIELDS.map(f => [f, (Array.isArray(S[f]) ? S[f] : []).filter(x => x != null).map(x => adoptEntryKey(f, x))]))
   }
 
   // The file mirror is the durable copy: WebView storage can be evicted while the files

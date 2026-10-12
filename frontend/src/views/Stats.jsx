@@ -24,6 +24,7 @@ import { Button, Segmented, SelectRow } from '../components/ui.jsx'
 import { tappable } from '../lib/use-sheet-keyboard.js'
 import { isWarmupRow } from '../lib/workout-model.js'
 import { trainingLoad } from '../lib/training-load.js'
+import { DailyHabitsHistory } from '../components/DailyHabits.jsx'
 
 // Which muscles the training in a window actually hit — and, the point of the card,
 // which ones it keeps missing. Shading is relative within the window (lib/muscles.js).
@@ -287,6 +288,40 @@ function EffortCard({ S }) {
   </div>
 }
 
+function ReadinessTrend({ workouts }) {
+  const rows = (workouts || []).filter(workout => workout?.readiness && typeof workout.readiness === 'object')
+    .sort((a, b) => (a.start || new Date(a.d).getTime()) - (b.start || new Date(b.d).getTime())).slice(-30)
+  if (!rows.length) return null
+  const measures = [
+    { key: 'energy', label: 'Energy', color: 'var(--green)' },
+    { key: 'sleep', label: 'Sleep', color: 'var(--blue)' },
+    { key: 'soreness', label: 'Soreness', color: 'var(--orange)' },
+  ]
+  return <div className="card readiness-trend">
+    <div className="row between" style={{ marginBottom: 12, alignItems: 'baseline' }}>
+      <h2 style={{ margin: 0 }}>{t('Workout readiness')}</h2>
+      <span className="small dim">{t('Last {0} check-ins', rows.length)}</span>
+    </div>
+    {measures.map(measure => {
+      const values = rows.map(workout => ({ workout, score: Number(workout.readiness[measure.key]) }))
+        .filter(item => Number.isInteger(item.score) && item.score >= 1 && item.score <= 5)
+      if (!values.length) return null
+      const average = values.reduce((sum, item) => sum + item.score, 0) / values.length
+      const latest = values.at(-1).score
+      const points = values.map(({ workout, score }) => ({
+        t: workout.start || new Date(`${workout.d}T12:00:00`).getTime(), d: workout.d, y: score,
+      }))
+      return <div className="readiness-trend-row" key={measure.key}>
+        <div className="row between small">
+          <b>{t(measure.label)}</b>
+          <span className="dim">{t('Average')} {fmtNum(average)} / 5 · {t('Latest')} {latest} / 5</span>
+        </div>
+        <LineChart points={points} h={66} axes={false} color={measure.color} />
+      </div>
+    })}
+  </div>
+}
+
 // Stats = the analytics hub: all charts, progress and history live here.
 export default function Stats() {
   const nav = useNavigate()
@@ -474,6 +509,8 @@ export default function Stats() {
       />
     </div>
 
+    <DailyHabitsHistory S={S} />
+
     {workouts.length > 0 && <div className="card">
       <h2>Training load · This week</h2>
       <div className="recovery-grid">
@@ -489,6 +526,7 @@ export default function Stats() {
       </div>)}
       <div className="small dim" style={{ marginTop: 10 }}>Volume load is logged weight × reps for loaded sets. It is separate from heart rate and active energy.</div>
     </div>}
+    <ReadinessTrend workouts={workouts} />
     {workouts.length > 0 && <MuscleBalance S={S} />}
     {workouts.length > 0 && <div className="card row between" style={{ alignItems: 'center', gap: 12 }}>
       <div style={{ minWidth: 0 }}><h2 style={{ margin: 0 }}>{t('Structural balance')}</h2>

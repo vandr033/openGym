@@ -17,6 +17,7 @@ describe('addDeviceDataMessage', () => {
     expect(addDeviceDataMessage(4, 1)).toMatch(/^4 workouts and 1 weigh-in were logged/)
     expect(addDeviceDataMessage(2, 5)).toMatch(/^2 workouts and 5 weigh-ins were logged/)
     expect(addDeviceDataMessage(0, 2)).toMatch(/^0 workouts and 2 weigh-ins were logged/)
+    expect(addDeviceDataMessage(0, 0, 0, 3)).toMatch(/^3 daily habit changes are on this device/)
   })
 
   it('uses the singular sentences of the language packs', () => {
@@ -26,5 +27,7 @@ describe('addDeviceDataMessage', () => {
     expect(addDeviceDataMessage(3, 1)).toMatch(/^3 Trainings und 1 Wiegung wurden/)
     _setLangState('ru', ru, null, null)
     expect(addDeviceDataMessage(1, 1)).toMatch(/^1 тренировка и 1 взвешивание/)
+    _setLangState('de', de, null, null)
+    expect(addDeviceDataMessage(0, 0, 0, 2)).toMatch(/^2 tägliche Gewohnheitsänderungen sind auf diesem Gerät/)
   })
 })

@@ -74,7 +74,7 @@ function ConfirmDialog({ title, message, confirmText, cancelText, danger, onConf
 }
 // "1 workouts and 1 weigh-ins" read wrong: a count of one takes the singular, per noun. Four
 // whole sentences rather than two spliced counts, so every language keeps its own word order.
-export function addDeviceDataMessage(workouts, weighIns, water = 0) {
+export function addDeviceDataMessage(workouts, weighIns, water = 0, dailyHabits = 0) {
   const one = n => Number(n) === 1
   const message = one(workouts)
     ? one(weighIns)
@@ -83,17 +83,22 @@ export function addDeviceDataMessage(workouts, weighIns, water = 0) {
     : one(weighIns)
       ? t('{0} workouts and {1} weigh-in were logged on this device while signed out. Add them to your profile, or keep the profile exactly as it is on the server.', workouts, weighIns)
       : t('{0} workouts and {1} weigh-ins were logged on this device while signed out. Add them to your profile, or keep the profile exactly as it is on the server.', workouts, weighIns)
-  if (!water) return message
-  if (!workouts && !weighIns) return t('{0} water entries were logged on this device while signed out. Add them to your profile, or keep the profile exactly as it is on the server.', water)
-  return message + ' ' + t('{0} water entries were also logged on this device.', water)
+  if (!workouts && !weighIns && !water && dailyHabits) {
+    return t('{0} daily habit changes are on this device but not in your profile. Add them or keep your profile unchanged.', dailyHabits)
+  }
+  if (!water && !dailyHabits) return message
+  if (!workouts && !weighIns && water && !dailyHabits) return t('{0} water entries were logged on this device while signed out. Add them to your profile, or keep the profile exactly as it is on the server.', water)
+  let out = water ? (!workouts && !weighIns ? t('{0} water entries were logged on this device while signed out. Add them to your profile, or keep the profile exactly as it is on the server.', water) : message + ' ' + t('{0} water entries were also logged on this device.', water)) : message
+  if (dailyHabits) out += (out ? ' ' : '') + t('{0} daily habit changes were also made on this device.', dailyHabits)
+  return out
 }
 // Sign-in found workouts on this device that the profile does not have (logged while signed
 // out). The profile is the truth — settings and plan come from the server either way — the
 // question is only whether these entries are added to it or dropped. Resolves true to add.
 export function askAddDeviceData(extras) {
   return new Promise(resolve => confirmSheet({
-    title: t(extras.water && !extras.workouts && !extras.bodyweight ? 'Add this device\'s water logs to your profile?' : 'Add this device\'s workouts to your profile?'),
-    message: addDeviceDataMessage(extras.workouts, extras.bodyweight, extras.water),
+    title: t(extras.dailyHabits && !extras.workouts && !extras.bodyweight && !extras.water ? 'Add this device\'s daily habit changes to your profile?' : extras.water && !extras.workouts && !extras.bodyweight ? 'Add this device\'s water logs to your profile?' : 'Add this device\'s workouts to your profile?'),
+    message: addDeviceDataMessage(extras.workouts, extras.bodyweight, extras.water, extras.dailyHabits),
     confirmText: t('Add them'), cancelText: t('Keep profile as is'),
     onConfirm: () => resolve(true), onCancel: () => resolve(false), locked: true
   }))

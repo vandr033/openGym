@@ -63,6 +63,25 @@ describe('adoptProfile — sign-in takes the server profile', () => {
     expect(sync().rev).toBe(5)
   })
 
+  it('offers habit-only device data and adds it without replacing profile settings', async () => {
+    const local = {
+      ...clone(DEF), _ts: 900,
+      dailyHabits: [{ id: 'sauna', active: true, _ts: 800 }],
+      habitLogs: [{ id: 'sauna|2026-10-12', habitId: 'sauna', d: '2026-10-12', done: true, t: 900 }],
+    }
+    signedIn(local)
+    api.mockResolvedValueOnce({ state: clone(server), rev: 4 })
+    api.mockResolvedValueOnce({ state: clone(server), rev: 4 })
+    api.mockResolvedValueOnce({ ok: true, rev: 5 })
+    const ask = vi.fn(async () => true)
+    await useStore.getState().adoptProfile(ask)
+    expect(ask).toHaveBeenCalledWith({ workouts: 0, bodyweight: 0, customEx: 0, dailyHabits: 2 })
+    expect(useStore.getState().S.unit).toBe('lb')
+    expect(useStore.getState().S.dailyHabits).toEqual(local.dailyHabits)
+    expect(useStore.getState().S.habitLogs).toEqual(local.habitLogs)
+    expect(puts()[0].state.habitLogs).toEqual(local.habitLogs)
+  })
+
   it('does not ask when the device has nothing the profile lacks', async () => {
     signedIn({ ...clone(DEF), _ts: 900, unit: 'kg' })
     api.mockResolvedValueOnce({ state: clone(server), rev: 4 })

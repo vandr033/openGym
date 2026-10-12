@@ -34,6 +34,49 @@ describe('newerOf / unionById / mergeBodyweight', () => {
   })
 })
 
+describe('daily habit merges', () => {
+  const log = (done, t) => ({ id: 'sauna|2026-10-11', habitId: 'sauna', d: '2026-10-11', done, t })
+
+  it('unions habit definitions and keeps the later edit of shared definitions', () => {
+    const a = base({ dailyHabits: [{ id: 'sauna', active: true, _ts: 10 }, { id: 'creatine', active: true, _ts: 10 }] })
+    const b = base({ dailyHabits: [{ id: 'sauna', active: false, _ts: 20 }, { id: 'cold-plunge', active: true, _ts: 20 }] })
+    const merged = mergeStates(a, b)
+    expect(merged.dailyHabits.map(h => h.id).sort()).toEqual(['cold-plunge', 'creatine', 'sauna'])
+    expect(merged.dailyHabits.find(h => h.id === 'sauna').active).toBe(false)
+  })
+
+  it('keeps the latest daily check-in edit, including an explicit uncheck', () => {
+    const done = base({ _ts: 20, habitLogs: [log(true, 10)] })
+    const unchecked = base({ _ts: 10, habitLogs: [log(false, 30)] })
+    expect(mergeStates(done, unchecked).habitLogs).toEqual([log(false, 30)])
+    expect(mergeStates(unchecked, done).habitLogs).toEqual([log(false, 30)])
+  })
+
+  it('keeps the preferred profile configuration while adding device-only habits', () => {
+    const server = base({ dailyHabits: [{ id: 'sauna', active: true, _ts: 10 }] })
+    const device = base({ dailyHabits: [{ id: 'sauna', active: false, _ts: 30 }, { id: 'creatine', active: true, _ts: 30 }] })
+    const merged = mergeStates(server, device, { prefer: 'a' })
+    expect(merged.dailyHabits.find(h => h.id === 'sauna').active).toBe(true)
+    expect(merged.dailyHabits.some(h => h.id === 'creatine')).toBe(true)
+  })
+
+  it('counts locally edited habit definitions and check-ins during sign-in adoption', () => {
+    const server = base({
+      dailyHabits: [{ id: 'custom', name: 'Mobility', active: true, _ts: 10 }],
+      habitLogs: [log(true, 10)],
+    })
+    const local = base({
+      dailyHabits: [{ id: 'custom', name: 'Mobility', active: false, _ts: 20 }],
+      habitLogs: [log(false, 20)],
+    })
+    expect(localExtras(local, server)).toMatchObject({ dailyHabits: 2 })
+    expect(resetIdsOf(local)).toMatchObject({
+      dailyHabits: ['custom'],
+      habitLogs: ['sauna|2026-10-11'],
+    })
+  })
+})
+
 describe('mergeStates', () => {
   const A = () => base({
     _ts: 200, restSec: 120, week: { 1: ['rA'] },

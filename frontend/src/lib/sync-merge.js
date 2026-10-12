@@ -8,7 +8,7 @@
  *
  * Rules, by field:
  *   - scalars and settings, `week`, `dayPlan`, `wc`, `reminder`, …: from the copy with the newer `_ts`
- *   - equipProfiles, gymCards: union by id, the newer copy's version of an id that both have
+ *   - equipProfiles, gymCards, dailyHabits: union by id, the newer copy's version of an id that both have
  *   - customEx: union by id; of an id that both have, the version edited last by its own `_ts`
  *     (stampCustomEx), the newer copy's on a tie — a photo or link added on one device must not
  *     be lost to the other's copy just because that one logged a set since
@@ -22,6 +22,8 @@
  *   - routines: union by id in the newer copy's order; of an id that both have, the version
  *     edited last by its own `_ts` (stampRoutines), the newer copy's on a tie
  *   - bodyweight: union by day, the later-edited (`t`) entry of a day that both have
+ *   - habitLogs: one record per habit and local day; the later-edited (`t`) record wins, including
+ *     an explicit `done: false` so an uncheck on one device is not resurrected by a stale copy
  *   - favEx: ordered set union, the newer copy first
  *   - exWeights: union by exercise, the better `w` for that exercise — larger for an ordinary
  *     lift, smaller on an assistance machine (a PR logged on the other device must not be
@@ -214,9 +216,11 @@ const workoutTime = w => Number(w?._ts) || Number(w?.end) || Number(w?.start) ||
 // What a reset records of the entries it wiped (resetIds), by field: how an entry is named.
 const bodyweightKey = e => `${e?.d}|${e?.t ?? ''}`
 const waterKey = e => e?.id ?? `${e?.t}|${e?.ml}`
+const habitLogKey = e => e?.id ?? `${e?.habitId}|${e?.d}`
 const RESET_LISTS = {
   workouts: workoutKey, routines: x => x?.id, programs: x => x?.id, customEx: x => x?.id, bodyweight: bodyweightKey, water: waterKey,
   gymCards: x => x?.id, equipProfiles: x => x?.id, favEx: x => x,
+  dailyHabits: x => x?.id, habitLogs: habitLogKey,
 }
 const RESET_MAPS = ['exNotes', 'barWeights', 'balanceOverrides', 'loadKind', 'plates']
 /** An entry's name in resetIds: a workout's id (or day and start), a weigh-in's day and time, … */
@@ -273,6 +277,8 @@ export function sinceReset(S, at, ids) {
     out.customEx = list(S.customEx).filter(c => c && after(c._ts))
     out.bodyweight = list(S.bodyweight).filter(e => e && after(e.t))
     out.water = list(S.water).filter(e => e && after(e.t))
+    out.dailyHabits = list(S.dailyHabits).filter(e => e && after(e._ts))
+    out.habitLogs = list(S.habitLogs).filter(e => e && after(e.t))
     // No time of their own: taken for what they were before the reset, which cleared them.
     out.equipProfiles = []
     out.gymCards = []
@@ -366,6 +372,14 @@ export function mergeStates(a0, b0, { prefer } = {}) {
   for (const f of ['routines', 'programs', 'customEx', 'equipProfiles', 'gymCards']) {
     if (list(n[f]).length || list(o[f]).length) out[f] = unionById(n[f], o[f]).map(clone)
   }
+  if (list(n.dailyHabits).length || list(o.dailyHabits).length) {
+    const newer = new Map(list(n.dailyHabits).map(h => [h?.id, h]))
+    const older = new Map(list(o.dailyHabits).map(h => [h?.id, h]))
+    out.dailyHabits = unionById(n.dailyHabits, o.dailyHabits).map(h => {
+      const a = newer.get(h?.id), b = older.get(h?.id)
+      return clone(b && (!a || (!prefer && (b._ts || 0) > (a._ts || 0))) ? b : a || h)
+    })
+  }
   // A routine edited on both sides keeps the version edited last. Taking the newer copy's
   // version dropped a plan edit made on one device whenever the other had since logged a set or
   // flipped a setting — its whole copy was newer, its version of that routine was not. `prefer`
@@ -397,6 +411,14 @@ export function mergeStates(a0, b0, { prefer } = {}) {
   }
   out.bodyweight = mergeBodyweight(n.bodyweight, o.bodyweight).map(clone)
   out.water = unionById(n.water, o.water, waterKey).map(clone)
+  if (list(n.habitLogs).length || list(o.habitLogs).length) {
+    const newer = new Map(list(n.habitLogs).map(e => [habitLogKey(e), e]))
+    const older = new Map(list(o.habitLogs).map(e => [habitLogKey(e), e]))
+    out.habitLogs = unionById(n.habitLogs, o.habitLogs, habitLogKey).map(e => {
+      const key = habitLogKey(e), a = newer.get(key), b = older.get(key)
+      return clone(b && (!a || (b.t || 0) > (a.t || 0)) ? b : a || e)
+    })
+  }
   if (list(n.favEx).length || list(o.favEx).length) out.favEx = [...new Set([...list(n.favEx), ...list(o.favEx)])]
   out.exWeights = clone(mergeExWeights(n.exWeights, o.exWeights))
   for (const [id, sources] of editedBy) {
@@ -507,5 +529,16 @@ export function localExtras(local, server) {
   const waterOnServer = new Set(list(server?.water).map(waterKey))
   const water = list(local?.water).filter(e => e && !waterOnServer.has(waterKey(e))).length
   if (water) extras.water = water
+  const serverHabits = new Map(list(server?.dailyHabits).map(h => [h?.id, h]))
+  const serverLogs = new Map(list(server?.habitLogs).map(e => [habitLogKey(e), e]))
+  const habits = list(local?.dailyHabits).filter(h => {
+    const theirs = serverHabits.get(h?.id)
+    return h && (!theirs || (h._ts || 0) > (theirs._ts || 0))
+  }).length
+  const logs = list(local?.habitLogs).filter(e => {
+    const theirs = serverLogs.get(habitLogKey(e))
+    return e && (!theirs || (e.t || 0) > (theirs.t || 0))
+  }).length
+  if (habits + logs) extras.dailyHabits = habits + logs
   return extras
 }

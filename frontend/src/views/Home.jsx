@@ -11,6 +11,7 @@ import { Button } from '../components/ui.jsx'
 import { tappable } from '../lib/use-sheet-keyboard.js'
 import { glyphOf } from '../lib/glyphs.js'
 import { activeProgramContext, daysBetween } from '../lib/programs.js'
+import { DailyHabitsCard } from '../components/DailyHabits.jsx'
 
 // Home = what to do now + a quick glance. Deep charts & history live in Stats.
 export default function Home() {
@@ -126,18 +127,20 @@ export default function Home() {
       </div>}
     </div>
 
-    <div className="card">
-      <div className="row between" style={{ marginBottom: 10 }}><h2 style={{ margin: 0 }}>Water</h2>
-        <Button size="sm" variant="ghost" trailingIcon="chevronRight" onClick={waterTrackingSheet}>Track water</Button></div>
+    {S.showWaterCard !== false && <div className="card">
+      <div className="row between" style={{ marginBottom: 10 }}><h2 style={{ margin: 0 }}>{t('Water')}</h2>
+        <Button size="sm" variant="ghost" trailingIcon="chevronRight" onClick={waterTrackingSheet}>{t('Track water')}</Button></div>
       <div className="row between" style={{ alignItems: 'baseline', gap: 8 }}>
         <strong style={{ fontSize: 24 }}>{waterMl.toLocaleString()} ml</strong>
-        <span className="small dim">of {waterGoal.toLocaleString()} ml</span>
+        <span className="small dim">{t('of {0} ml', waterGoal.toLocaleString())}</span>
       </div>
       <div role="progressbar" aria-label={t('Water goal')} aria-valuenow={Math.min(waterMl, waterGoal)} aria-valuemin={0} aria-valuemax={waterGoal}
         style={{ height: 6, borderRadius: 99, overflow: 'hidden', background: 'var(--surface-3)', margin: '10px 0 12px' }}>
         <div style={{ width: `${Math.min(100, waterMl / waterGoal * 100)}%`, height: '100%', background: 'var(--teal)' }} />
       </div>
-    </div>
+    </div>}
+
+    {S.showDailyHabits !== false && <DailyHabitsCard S={S} />}
 
     {activeProgram && <div className="card program-home">
       <div className="row" style={{ gap: 9, minWidth: 0 }}>
@@ -175,7 +178,7 @@ export default function Home() {
             <span className="lrow-i" style={{ background: 'var(--blue)' }}><Icon name="qr" /></span>
             <div>
               <div className="lbl2">{t('At the gym')}</div>
-              <div className="ttl">{t('Check in')}</div>
+              <div className="ttl">{t('Gym check-in')}</div>
             </div>
           </div>
           <Icon name="chevronRight" className="chev" />
