@@ -1,4 +1,4 @@
-name: opengym
+name: opengym-multitenant
 
 services:
   media:
