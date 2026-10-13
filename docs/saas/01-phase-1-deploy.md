@@ -41,22 +41,23 @@ SAAS_TEST_DATABASE_URL='mysql://opengym:<password>@127.0.0.1:3306/opengym_saas_t
 
 The command refuses any other database name, applies the checked-in migration to that test schema, and exercises the real invitation, authorization, consent, deactivation/deletion, and audit-trigger paths. It leaves uniquely named test rows in that disposable schema; do not point it at an application database.
 
+For MySQL 8.4 with binary logging enabled, configure the disposable server with `log_bin_trust_function_creators=1` so the migration user can install the append-only triggers without `SUPER`. The dedicated Coolify stack sets this on its isolated MySQL service; do not change the personal deployment's database for this SaaS test.
+
 After verifying the migration and provisioned account, set `SAAS_ENABLED=1` and recreate the API container. If the database is unavailable, SaaS routes return 503 while the existing JSON API remains available. Setting the flag back to `0` stops the tenant endpoints; it does not delete SQL data.
 
 ## Coolify
 
-Keep the MySQL service on the Compose private network and do not publish port 3306. Configure `SAAS_MYSQL_PASSWORD` and `SAAS_DATABASE_URL` as secrets/environment values. The `mysql` service uses the `saas` profile; `migrate` uses the separate `saas-migrate` profile, so normal deploys do not migrate automatically.
+Use [04-brevo-coolify-dev-deployment.md](04-brevo-coolify-dev-deployment.md) for the dedicated SaaS Coolify stack. `docker-compose.coolify.yml` has the project name `opengym-multitenant`, a private MySQL service, and its own JSON, MySQL, and exercise-media volumes. It is separate from the personal Compose project. Do not change the project name or publish MySQL port 3306.
 
-For the first deployment, make a consistent backup of the existing data volume and a MySQL snapshot/dump if the SQL volume already exists. Run the one-shot migration service explicitly from the same revision being deployed:
+Normal deployments do not run migrations. After creating the stack's MySQL users and configuring `SAAS_MIGRATION_DATABASE_URL`, run the one-shot migration service explicitly from the same revision being deployed:
 
 ```sh
-docker compose -f docker-compose.coolify.yml \
-  --profile saas --profile saas-migrate run --rm migrate
+docker compose -f docker-compose.coolify.yml --profile saas-migrate run --rm migrate
 ```
 
-Run that command a second time and confirm it reports no pending migrations. Provision the platform admin with the same command shown above using the API container, then enable `SAAS_ENABLED=1` in Coolify and redeploy the API.
+Run that command a second time and confirm it reports no pending migrations. The full runbook covers the initial account, least-privilege migration user, PlatformAdmin bootstrap, feature flags, and backups.
 
-Use the normal API image for application traffic; it contains the generated Prisma Client but not the Prisma migration CLI. The separate `migrate` target carries the CLI for this explicit operation. Do not run `prisma db push` or `migrate dev` against production.
+Use the normal API image for application traffic; it contains the generated Prisma Client but not the Prisma migration CLI. The separate `migrate` target carries the CLI for this explicit operation. Do not run `prisma db push` or `migrate dev` against a deployed database.
 
 ## Rollback and restore
 

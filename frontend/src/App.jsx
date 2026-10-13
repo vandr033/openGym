@@ -42,6 +42,8 @@ import Admin from './views/Admin.jsx'
 import CoachChat from './views/CoachChat.jsx'
 import CoachIntake from './views/CoachIntake.jsx'
 import CoachSetup from './views/CoachSetup.jsx'
+import Join from './views/Join.jsx'
+import Organization from './views/Organization.jsx'
 
 // last known scrollY per route, so back-navigation can put the page where it was
 const scrollPositions = new Map()
@@ -174,8 +176,10 @@ function Shell() {
           re-mounts the boundary, so the tab bar is always a way out */}
       <div id="app" className="vfade" key={loc.pathname}>
         <ErrorBoundary>
-          {!authed ? <Login /> : needsMobileOnboarding ? <MobileOnboarding /> : (
+          {!authed && !loc.pathname.startsWith('/join') ? <Login /> : needsMobileOnboarding && !loc.pathname.startsWith('/join') ? <MobileOnboarding /> : (
             <Routes>
+              <Route path="/join/:token?" element={<Join />} />
+              {config?.saas_invites_v2 && <Route path="/organization" element={<Organization />} />}
               <Route path="/home" element={<Home />} />
               {/* Gym check-in — switched off in Settings, the route falls through to the
                   catch-all redirect below. */}
@@ -208,7 +212,7 @@ function Shell() {
           including on the sign-in screen, when the server has just ended the session. */}
       <SyncBanner />
       {/* The chat owns the bottom of the screen: its composer sits where the tabs would be. */}
-      {loc.pathname !== '/coach' && <TabBar onStart={startFlow} />}
+      {loc.pathname !== '/coach' && !loc.pathname.startsWith('/join') && <TabBar onStart={startFlow} />}
       <RestTimer />
       <Modals />
       <Toast />

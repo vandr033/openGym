@@ -1,6 +1,6 @@
 import { useStore } from '../store/useStore.js'
 import { useUI } from '../store/useUI.js'
-import { webauthnOK, passkeyLogin, passkeyRegister, bio } from '../lib/api.js'
+import { api, webauthnOK, passkeyLogin, passkeyRegister, bio } from '../lib/api.js'
 import { hasData } from '../store/useStore.js'
 import { t } from '../lib/i18n.js'
 import { DEMO, REPO } from '../lib/demo.js'
@@ -11,6 +11,77 @@ import { Button, Segmented } from '../components/ui.jsx'
 import { askAddDeviceData } from '../sheets.jsx'
 import { passwordOn, PasswordRegisterForm, openPasswordSignIn } from '../components/PasswordAuth.jsx'
 import { openDeviceLinkRedeem } from '../components/Passkeys.jsx'
+import { MOBILE } from '../lib/mobile.js'
+import { clearEmailOtpState, readEmailOtpState, writeEmailOtpState } from '../lib/email-otp-state.js'
+import { nav } from '../lib/nav.js'
+
+function EmailCodeSignIn() {
+  const { setUser, adoptProfile } = useStore()
+  const [saved] = useState(() => readEmailOtpState('login'))
+  const [email, setEmail] = useState(saved?.email || '')
+  const [challengeId, setChallengeId] = useState(saved?.challengeId || '')
+  const [code, setCode] = useState('')
+  const [seconds, setSeconds] = useState(Math.max(0, Math.ceil(((saved?.resendAt || 0) - Date.now()) / 1000)))
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!seconds) return
+    const timer = setTimeout(() => setSeconds(value => Math.max(0, value - 1)), 1000)
+    return () => clearTimeout(timer)
+  }, [seconds])
+
+  const request = async () => {
+    setBusy(true); setError('')
+    try {
+      const result = await api('/api/v2/auth/email/request', { method: 'POST', body: JSON.stringify({ email: email.trim(), purpose: 'LOGIN' }) })
+      const now = Date.now()
+      const next = { email: email.trim(), challengeId: result.challengeId, context: 'login', expiresAt: now + 10 * 60000, resendAt: now + (result.resendAfter || 60) * 1000 }
+      writeEmailOtpState('login', next)
+      setChallengeId(next.challengeId); setSeconds(result.resendAfter || 60); setCode('')
+    } catch (e) { setError(e.message || t('Could not request a code')) }
+    finally { setBusy(false) }
+  }
+  const verify = async ev => {
+    ev.preventDefault(); setBusy(true); setError('')
+    try {
+      const result = await api('/api/v2/auth/email/verify', { method: 'POST', body: JSON.stringify({ challengeId, code }) })
+      if (!result.user) throw new Error(t('This email needs an invitation to create an account.'))
+      clearEmailOtpState('login')
+      const st = useStore.getState()
+      st.setUser(result.user, { adopt: true })
+      await st.adoptProfile(askAddDeviceData)
+      useUI.getState().toast(t('Welcome back, {0}', result.user.name))
+    } catch (e) { setError(e.message || t('That code is invalid or expired.')) }
+    finally { setBusy(false) }
+  }
+
+  return <section className="card" aria-label={t('Sign in with email')} style={{ textAlign: 'start', marginBottom: 14 }}>
+    <div className="lbl2">{t('Sign in with email')}</div>
+    <div className="small muted" style={{ margin: '4px 0 10px' }}>{t('Get a one-time code at your verified email address.')}</div>
+    {!challengeId ? <>
+      <form onSubmit={ev => { ev.preventDefault(); request() }}>
+        <input className="input" type="email" name="email" autoComplete="email" inputMode="email" maxLength={254}
+          placeholder={t('E-mail address')} value={email} onChange={ev => setEmail(ev.target.value)} required />
+        <div style={{ height: 10 }} />
+        <Button type="submit" variant="primary" disabled={busy}>{t('Send code')}</Button>
+      </form>
+    </> : <>
+      <div className="small muted" style={{ marginBottom: 8 }}>{t('If this address can sign in, a code will arrive. Check your inbox.')}</div>
+      <div className="small dim" style={{ marginBottom: 8 }}>{t('The code expires in 10 minutes. Never share your code.')}</div>
+      <form onSubmit={verify}>
+        <input className="input" type="text" inputMode="numeric" autoComplete="one-time-code" aria-label={t('Six-digit email code')}
+          maxLength={6} pattern="[0-9]{6}" value={code} onChange={ev => setCode(ev.target.value.replace(/\D/g, '').slice(0, 6))} required />
+        <div style={{ height: 10 }} />
+        <Button type="submit" variant="primary" disabled={busy || code.length !== 6}>{t('Verify code')}</Button>
+      </form>
+      <div className="small dim" style={{ marginTop: 8 }}>
+        {seconds ? t('Resend available in {0}s', seconds) : <button type="button" className="linkbtn" disabled={busy} onClick={request}>{t('Send another code')}</button>}
+      </div>
+    </>}
+    {error && <div className="small" role="alert" style={{ color: 'var(--red)', marginTop: 8 }}>{error}</div>}
+  </section>
+}
 
 function RegisterSheet({ close }) {
   const { setUser, pushState, pullState, loadConfig } = useStore()
@@ -100,6 +171,7 @@ export default function Login() {
     <div className="narrow" style={wrap}>
       {head}
       <div className="muted" style={{ marginBottom: 34 }}>{t('Your workouts. Your weights. Your profile.')}</div>
+      {config?.saas_email_otp && !MOBILE && <EmailCodeSignIn />}
       {webauthnOK() ? <>
         <Button variant="primary" icon="person" onClick={signIn}>{t('Sign in with passkey')}</Button>
         <div style={{ height: 10 }} />
@@ -123,6 +195,7 @@ export default function Login() {
         // Without passkeys and without the guest entrance there is no way in from this browser,
         // so say that plainly instead of offering a local profile that cannot be created.
         : t("This browser doesn't support passkeys, and this instance requires an account. Try a browser or device with passkey support.")}</div>}
+      {config?.saas_invites_v2 && !MOBILE && <Button variant="ghost" className="dim" onClick={() => nav('/join')}>{t('Join a gym')}</Button>}
       {canGuest && <Button variant="ghost" className="dim" onClick={() => setGuest(true)}>{t('Continue without account')}</Button>}
       <div className="dim small" style={{ marginTop: 26, lineHeight: 1.5 }}>{pwOn ? t('Passkeys use {0}. A password works too, where passkeys do not.', bio()) : t('Passkeys use {0} — no passwords.', bio())}<br />{t('Each profile keeps its own plan, workouts & body weight.')}</div>
     </div>

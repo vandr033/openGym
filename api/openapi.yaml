@@ -202,6 +202,10 @@ paths:
         `exercise_media` is present when an admin has imported catalog media. It maps exercise ids
         to local API paths for saved images and GIFs.
 
+        `saas_email_otp: true` is present only when `SAAS_ENABLED=1`,
+        `SAAS_EMAIL_OTP_ENABLED=1`, and a mail transport is configured. `saas_invites_v2: true`
+        is present only when SaaS, OTP, invitation v2, and a mail transport are enabled.
+
         A caller with a valid session also gets a `coach` key: the block when the
         instance has the AI Coach switched on **and** a provider connected, and `null`
         when it has not. A caller with no session gets no key at all — the block names
@@ -260,6 +264,16 @@ paths:
                     description: >-
                       Present only when both SAAS_ENABLED=1 and COLLAB_WORKOUTS_ENABLED=1;
                       the client then exposes its separate SQL-backed collaborative workout mode.
+                  saas_email_otp:
+                    type: boolean
+                    const: true
+                    description: >-
+                      Present only when SaaS OTP is enabled and Brevo is configured outside sandbox mode.
+                  saas_invites_v2:
+                    type: boolean
+                    const: true
+                    description: >-
+                      Present only when SaaS OTP and invitation v2 are enabled and Brevo is configured outside sandbox mode.
                   default_lang:
                     type: string
                     example: pt-BR
@@ -1287,7 +1301,9 @@ paths:
         profile's password — only while `PASSWORD_LOGIN` is on. With it off, a password
         kept from before is not checked at all and the answer is `passkey-required`, so a
         password-only profile has to move onto a passkey while the flag is still on. Wrong
-        passwords count toward the sign-in pause.
+        passwords count toward the sign-in pause. An account with a verified e-mail and no
+        passkey/password may instead use a one-use `emailProof` from the e-mail reauthentication
+        routes; that proof authorizes passkey creation only and expires within five minutes.
 
         The options use the profile's own user handle and list its passkeys in
         `excludeCredentials`, so an authenticator that already holds one refuses. The
@@ -1297,7 +1313,12 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/OwnerProof' }
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/OwnerProof'
+                - type: object
+                  properties:
+                    emailProof: { type: string, description: One-use proof from the email reauthentication route; passkey-add only. }
       responses:
         '200':
           description: Ceremony options.
@@ -2997,6 +3018,220 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /api/v2/auth/email/request:
+    post:
+      tags: [saas]
+      operationId: requestEmailOtp
+      summary: Request an e-mail verification code
+      description: >-
+        Requires `SAAS_ENABLED=1` and `SAAS_EMAIL_OTP_ENABLED=1`. The accepted response is generic
+        for known and unknown addresses. `purpose: INVITATION` also requires invites v2 and a valid
+        token or recipient-bound invitation code. Codes are six digits, HMAC-protected at rest,
+        single-use, limited to five attempts, expire after ten minutes, and have a 60-second resend cooldown.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, purpose]
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+                purpose: { type: string, enum: [LOGIN, INVITATION] }
+                invitationRef: { type: string, description: High-entropy invitation token or six-digit code. }
+      responses:
+        '202':
+          description: >-
+            Generic accepted response with a challenge handle and resend delay. Brevo's ACCEPTED status
+            means it accepted the submission for processing, not that the message reached an inbox. A
+            sandbox submission is never redeemable and does not send to the recipient.
+        '400': { description: Invalid e-mail or request body. }
+        '404': { description: Feature flags are disabled or invitation reference is unavailable. }
+        '429': { description: Rate limited; includes a Retry-After header. }
+        '503': { description: No Brevo provider is configured or the SaaS database is unavailable. }
+
+  /api/v2/auth/email/verify:
+    post:
+      tags: [saas]
+      operationId: verifyEmailOtp
+      summary: Verify an e-mail code and sign in or start onboarding
+      description: >-
+        Existing accounts resolve only through `VerifiedEmailIdentity`; an unverified legacy
+        `db.json` e-mail never authenticates a user. Existing verified users receive the existing
+        OpenGym session. A first-time invitee receives a short-lived registration state instead.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [challengeId, code]
+              properties:
+                challengeId: { type: string, format: uuid }
+                code: { type: string, pattern: '^[0-9]{6}$' }
+      responses:
+        '200': { description: Existing OpenGym session or short-lived registration state. }
+        '400': { description: Code is invalid, expired, consumed, or over the attempt limit. }
+        '409': { description: Address belongs to an existing account with an unverified legacy e-mail; sign in and link it explicitly. }
+        '429': { description: Rate limited; includes a Retry-After header. }
+        '503': { description: E-mail transport or SaaS database unavailable. }
+
+  /api/v2/auth/email/status:
+    get:
+      tags: [saas]
+      operationId: getVerifiedEmailStatus
+      summary: Get the signed-in account's masked verified e-mail
+      responses:
+        '200': { description: Masked e-mail and verification timestamp. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { description: SaaS identity database unavailable. }
+
+  /api/v2/auth/email/reauth/request:
+    post:
+      tags: [saas]
+      operationId: requestPasskeyAddEmailProof
+      summary: Request a recent email proof for adding the first passkey
+      description: Authenticated account with a verified e-mail only. The code is purpose-bound and cannot authorize linking another e-mail or another account change.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false }
+      responses:
+        '202': { description: Submission accepted for processing; includes masked address and resend delay, but does not guarantee inbox delivery. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { description: Account has no verified e-mail identity. }
+        '429': { description: Rate limited. }
+
+  /api/v2/auth/email/reauth/verify:
+    post:
+      tags: [saas]
+      operationId: verifyPasskeyAddEmailProof
+      summary: Verify the code and get a short-lived one-use passkey-add proof
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [challengeId, code]
+              properties:
+                challengeId: { type: string, format: uuid }
+                code: { type: string, pattern: '^[0-9]{6}$' }
+      responses:
+        '200': { description: Short-lived proof for POST /api/account/passkeys/options only. }
+        '400': { description: Code is invalid or expired. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { description: Rate limited. }
+
+  /api/v2/auth/email/link/request:
+    post:
+      tags: [saas]
+      operationId: requestVerifiedEmailLink
+      summary: Step-up authenticate and request a code to link an e-mail
+      description: Requires the existing session plus the current passkey or password proof. This does not match or migrate any unverified legacy e-mail automatically.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+                current: { type: string, description: Current password proof, when enabled. }
+                cid: { type: string, description: Passkey assertion challenge id. }
+                credential: { type: object, description: Passkey assertion response. }
+      responses:
+        '202': { description: Code request accepted. }
+        '200': { description: This address is already verified for the signed-in account. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { description: Address is already linked to another account. }
+        '429': { description: Rate limited. }
+
+  /api/v2/auth/email/link/verify:
+    post:
+      tags: [saas]
+      operationId: verifyVerifiedEmailLink
+      summary: Verify and link an e-mail to the signed-in account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [challengeId, code]
+              properties:
+                challengeId: { type: string, format: uuid }
+                code: { type: string, pattern: '^[0-9]{6}$' }
+      responses:
+        '200': { description: Verified address linked to the current SQL identity. }
+        '400': { description: Code is invalid, expired, consumed, or belongs to another session. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { description: Address is already linked to another account. }
+
+  /api/v2/invitations/preview:
+    post:
+      tags: [saas]
+      operationId: previewSaasInvitation
+      summary: Preview a high-entropy invite or recipient-bound short code
+      description: Token previews reveal only minimal masked invitation details. A six-digit invitation code requires an authenticated verified-email identity or a verified registration state matching its target address.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token: { type: string, minLength: 40, maxLength: 50 }
+                code: { type: string, pattern: '^[0-9]{6}$' }
+                registrationState: { type: string }
+      responses:
+        '200': { description: Minimal organization, role, masked target e-mail, and expiration. }
+        '400': { description: Invalid request body. }
+        '404': { description: Invalid, expired, revoked, or unbound invitation. }
+        '429': { description: Short-code lookup rate limited. }
+
+  /api/v2/onboarding/complete:
+    post:
+      tags: [saas]
+      operationId: completeSaasEmailOnboarding
+      summary: Create a linked OpenGym account and accept its invitation
+      description: >-
+        Uses a verified, short-lived registration state. SQL identity, verified address, invitation
+        acceptance, and onboarding state commit in one SQL transaction; the legacy JSON user/state
+        files are then created with a fixed UID and can be recovered idempotently after a crash.
+        When `INVITE_ONLY=1`, a valid bound invitation is required. Solo workout history is not
+        copied into collaborative workout sessions, and acceptance creates no access grants.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [registrationState, name]
+              properties:
+                registrationState: { type: string }
+                invitationRef: { type: string, description: The same token/code bound to the OTP challenge. }
+                name: { type: string, minLength: 1, maxLength: 40 }
+                phone: { type: string, pattern: '^\\+[1-9][0-9]{7,14}$' }
+                preferences:
+                  type: object
+                  required: [unit, lang]
+                  properties:
+                    unit: { type: string, enum: [kg, lb] }
+                    lang: { type: string }
+      responses:
+        '200': { description: New session plus completed invitation acceptance. }
+        '400': { description: Invalid profile or verified state. }
+        '403': { description: Invite-only registration lacks a valid invitation. }
+        '404': { description: Registration state or invitation is unavailable. }
+        '409': { description: E-mail or invitation conflicts with another account. }
+        '503': { description: E-mail transport or SaaS database unavailable. }
+
   /api/v2/platform/organizations:
     post:
       tags: [saas]
@@ -3004,20 +3239,24 @@ paths:
       summary: Create a gym or trainer business
       description: >-
         Requires an active session, `SAAS_ENABLED=1`, and a separately provisioned PlatformAdmin
-        row. Creates the organization and a seven-day, one-use OWNER invitation for an existing
-        active OpenGym account. The invitation token is returned only in this response.
+        row. Accepts exactly one of `ownerLegacyUid` (backward-compatible existing account) or
+        `ownerEmail` (invites a new or verified-email account without creating it). The email form
+        is gated by `SAAS_INVITES_V2_ENABLED`; its invitation expires after seven days. Link/code
+        secrets are returned only in this response. `sendEmail` is optional.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [type, name, slug, ownerLegacyUid]
+              required: [type, name, slug]
               properties:
                 type: { type: string, enum: [GYM, TRAINER_BUSINESS] }
                 name: { type: string, minLength: 1, maxLength: 120 }
                 slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,78}[a-z0-9])?$' }
                 ownerLegacyUid: { type: string, maxLength: 128 }
+                ownerEmail: { type: string, format: email, maxLength: 254 }
+                sendEmail: { type: boolean, default: false }
       responses:
         '201':
           description: Organization created with an owner invitation.
@@ -3027,7 +3266,7 @@ paths:
                 type: object
                 properties:
                   organization: { type: object, properties: { id: { type: string, format: uuid }, type: { type: string }, name: { type: string }, slug: { type: string }, status: { type: string }, createdAt: { type: string, format: date-time } } }
-                  ownerInvitation: { type: object, properties: { invitation: { type: object }, token: { type: string } } }
+                  ownerInvitation: { type: object, properties: { invitation: { type: object }, token: { type: string }, code: { type: string }, deliveryStatus: { type: string } } }
         '400': { description: Invalid organization or owner fields. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { description: Not provisioned as PlatformAdmin or owner account is unavailable. }
@@ -3049,12 +3288,82 @@ paths:
       tags: [saas]
       operationId: listMyOrganizations
       summary: List my organization memberships and client enrollments
-      description: Maps the authenticated legacy OpenGym user to one SQL identity on first use. Cookie, optional-password, passkey, and paired Bearer sessions use the same legacy UID mapping.
+      description: Maps the authenticated legacy OpenGym user to one SQL identity on first use. Cookie, optional-password, passkey, and paired Bearer sessions use the same legacy UID mapping. Includes the caller's SQL userId for organization role-aware UI.
       responses:
         '200': { description: Active organization memberships and client enrollments. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { description: SQL identity is deactivated or deleted. }
         '503': { description: SaaS identity database is unavailable. }
+
+  /api/v2/organizations/{orgId}/members:
+    get:
+      tags: [saas]
+      operationId: listOrganizationMembers
+      summary: List organization team membership metadata
+      description: OWNER/ADMIN only; returns role and status, not e-mail addresses or workouts.
+      parameters:
+        - { name: orgId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Team member names, roles, and membership status. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Organization is outside this actor's authorized scope. }
+
+  /api/v2/organizations/{orgId}/invitations:
+    get:
+      tags: [saas]
+      operationId: listOrganizationInvitations
+      summary: List invitation lifecycle and delivery metadata
+      description: OWNER/ADMIN see organization invitations; TRAINER sees invitations they created or assigned to themselves. E-mail is masked; link and code secrets are never returned.
+      parameters:
+        - { name: orgId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Masked invitation metadata and delivery status. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Organization is outside this actor's authorized scope. }
+    post:
+      tags: [saas]
+      operationId: createEmailInvitation
+      summary: Create a recipient-bound membership or client invitation
+      description: Requires invites v2 and an OWNER/ADMIN/TRAINER membership. Client invitations name an eligible trainer; TRAINER can invite clients only to their own relationship. Acceptance verifies the target e-mail and grants no consent scopes.
+      parameters:
+        - { name: orgId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role, email]
+              properties:
+                role: { type: string, enum: [OWNER, ADMIN, TRAINER, STAFF, CLIENT] }
+                email: { type: string, format: email, maxLength: 254 }
+                trainerId: { type: string, format: uuid, description: Required for CLIENT. }
+                expiresInDays: { type: integer, minimum: 1, maximum: 30, default: 7 }
+                sendEmail: { type: boolean, default: false }
+      responses:
+        '201': { description: One-time link and recipient-bound code, optionally sent by e-mail. }
+        '400': { description: Invalid role, e-mail, trainer, or expiration. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Organization or actor is not authorized. }
+        '409': { description: Active invite, membership, or enrollment already exists. }
+
+  /api/v2/organizations/{orgId}/invitations/{invitationId}/resend:
+    post:
+      tags: [saas]
+      operationId: resendEmailInvitation
+      summary: Rotate and optionally resend an active invitation
+      description: The old link and code are invalidated; new secrets are returned only once.
+      parameters:
+        - { name: orgId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: invitationId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { sendEmail: { type: boolean, default: false } } }
+      responses:
+        '200': { description: Rotated one-time link/code and delivery status. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Invitation is inactive or outside the actor's scope. }
 
   /api/v2/organizations/{orgId}/members/invitations:
     post:
@@ -3112,21 +3421,22 @@ paths:
       tags: [saas]
       operationId: acceptSaasInvitation
       summary: Accept an organization or client invitation
-      description: Requires an authenticated, active OpenGym account. The invitation is single-use, expires, binds to the authenticated legacy UID when targeted, and rechecks the inviter's current authority before acceptance. It is not a signup credential.
+      description: Requires an authenticated, active OpenGym account. The invitation is single-use, expires, binds to its target e-mail when present, binds to a legacy UID for older invitations, and rechecks the inviter's current authority before acceptance. A six-digit code is accepted only against the caller's matching verified e-mail. Acceptance creates no consent grants.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [token]
               properties:
                 token: { type: string, minLength: 40, maxLength: 50 }
+                code: { type: string, pattern: '^[0-9]{6}$' }
       responses:
         '200': { description: Membership acceptance or client enrollment and relationship acceptance. }
         '400': { description: Invalid request body. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { description: Invitation is invalid, expired, revoked, targeted to another account, or its inviter lost authority. }
+        '429': { description: Invitation-code redemption rate limited. }
         '409': { description: Account already has the invited membership. }
         '503': { description: SaaS identity database is unavailable. }
 

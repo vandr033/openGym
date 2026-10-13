@@ -88,6 +88,7 @@ const REASONS = {
   'unknown-email': 'no profile with a password has that e-mail',
   'email-taken': 'another profile already uses that e-mail',
   'step-up-failed': 'the passkey confirming the change was rejected',
+  'email-step-up-failed': 'the e-mail code confirming the change was rejected',
   'reset-invalid': 'wrong or expired reset code',
   'link-invalid': 'wrong, used or expired device code',
   'passkey-limit': 'the profile already has as many passkeys as it can hold',

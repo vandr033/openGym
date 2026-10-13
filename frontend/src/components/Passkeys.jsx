@@ -174,6 +174,37 @@ function AddPasskeySheet({ state, close, done }) {
   const [ready, setReady] = useState(null)   // { cid, options } once the proof went through
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
+  const config = useStore(s => s.config)
+  const emailOtpSetup = !state.passkeys.length && !state.password && !!config?.saas_email_otp
+  const [emailChallenge, setEmailChallenge] = useState(null)
+  const [emailCode, setEmailCode] = useState('')
+  const [emailSeconds, setEmailSeconds] = useState(0)
+  const [emailNotice, setEmailNotice] = useState('')
+  useEffect(() => {
+    if (!emailSeconds) return
+    const timer = setTimeout(() => setEmailSeconds(value => Math.max(0, value - 1)), 1000)
+    return () => clearTimeout(timer)
+  }, [emailSeconds])
+  const requestEmailProof = async () => {
+    if (busy) return
+    setBusy(true); setErr(null)
+    try {
+      const result = await post('/api/v2/auth/email/reauth/request', {})
+      setEmailChallenge(result.challengeId); setEmailCode(''); setEmailSeconds(result.resendAfter || 60)
+      setEmailNotice(t('A code was sent to {0}.', result.email))
+    } catch (e) { setErr(e.message || t('Could not request an e-mail code.')) }
+    finally { setBusy(false) }
+  }
+  const verifyEmailProof = async ev => {
+    ev.preventDefault()
+    if (busy) return
+    setBusy(true); setErr(null)
+    try {
+      const proof = await post('/api/v2/auth/email/reauth/verify', { challengeId: emailChallenge, code: emailCode })
+      setReady(await post('/api/account/passkeys/options', { emailProof: proof.proof }))
+    } catch (e) { setErr(passkeyError(e)) }
+    finally { setBusy(false) }
+  }
   const create = async () => {
     if (busy) return
     setBusy(true); setErr(null)
@@ -193,12 +224,22 @@ function AddPasskeySheet({ state, close, done }) {
     <h3>{t('Add a passkey')}</h3>
     <div className="muted small" style={{ marginBottom: 14 }}>{ready
       ? t('Confirmed. Now create the new passkey — your browser asks where to keep it.')
-      : t('For this device, a security key, a password manager, or your phone through the browser’s own QR code. First confirm that it is you.')}</div>
+      : emailOtpSetup ? t('Verify your existing e-mail address to add the first passkey. This gives you another way to sign in if e-mail codes are later turned off.')
+        : t('For this device, a security key, a password manager, or your phone through the browser’s own QR code. First confirm that it is you.')}</div>
     <input className="input" placeholder={t('Name, e.g. Work laptop')} maxLength={40} value={name} onChange={e => setName(e.target.value)} />
     <div style={{ height: 12 }} />
     {ready ? <Button variant="primary" icon="plus" disabled={busy} onClick={create}>{t('Create passkey')}</Button>
-      : <ProveOwner passkey={state.passkeys.length > 0} password={state.password} explain={passkeyError}
-        onProof={async proof => setReady(await post('/api/account/passkeys/options', proof))} />}
+      : emailOtpSetup ? emailChallenge ? <form onSubmit={verifyEmailProof}>
+        <div className="small muted" style={{ marginBottom: 10 }}>{t('Enter the six-digit code from your verified e-mail.')}</div>
+        <input className="input" inputMode="numeric" autoComplete="one-time-code" aria-label={t('Six-digit e-mail code')} maxLength={6} pattern="[0-9]{6}"
+          value={emailCode} onChange={e => setEmailCode(e.target.value.replace(/\D/g, '').slice(0, 6))} required />
+        <div className="small dim" style={{ marginTop: 6 }}>{t('The code expires in 10 minutes. Never share your code.')}</div>
+        <div style={{ height: 12 }} /><Button type="submit" variant="primary" disabled={busy || emailCode.length !== 6}>{t('Verify code')}</Button>
+        <div className="small dim" style={{ marginTop: 8 }}>{emailSeconds ? t('Resend available in {0}s', emailSeconds) : <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={requestEmailProof}>{t('Send another code')}</Button>}</div>
+      </form> : <Button variant="primary" disabled={busy} onClick={requestEmailProof}>{t('Send code to verified e-mail')}</Button>
+        : <ProveOwner passkey={state.passkeys.length > 0} password={state.password} explain={passkeyError}
+          onProof={async proof => setReady(await post('/api/account/passkeys/options', proof))} />}
+    {emailNotice && <div className="small muted" role="status" style={{ marginTop: 8 }}>{emailNotice}</div>}
     {err && <div className="small" role="alert" style={errStyle}>{err}</div>}
   </>
 }

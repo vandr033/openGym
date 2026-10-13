@@ -41,6 +41,7 @@ test('every route the server registers is in openapi.yaml, and nothing else is',
   const routes = new Set([
     ...routeKeys(read(path.join(API, 'server.js'))),
     ...routeKeys(read(path.join(API, 'coach', 'routes.js'))),
+    ...routeKeys(read(path.join(API, 'saas', 'email-auth-routes.js'))),
     ...routeKeys(read(path.join(API, 'saas', 'routes.js'))),
     ...routeKeys(read(path.join(API, 'saas', 'workout-routes.js')))
   ]);

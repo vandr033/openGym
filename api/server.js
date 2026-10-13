@@ -18,8 +18,10 @@ import * as coachJobs from './coach/jobs.js';
 import { coachRoutes } from './coach/routes.js';
 import { saasRoutes, matchSaasRoute } from './saas/routes.js';
 import { workoutSessionRoutes } from './saas/workout-routes.js';
+import { emailAuthRoutes } from './saas/email-auth-routes.js';
+import { createEmailDelivery, parseEmailOtpStepUpProof } from './saas/email-security.js';
 import { getSaasDb } from './saas/db.js';
-import { deactivateMappedIdentity, legacyUidHash } from './saas/identity.js';
+import { deactivateMappedIdentity, ensureIdentity, legacyUidHash } from './saas/identity.js';
 import { startCadence } from './coach/cadence.js';
 import { startWarmup } from './coach/warmup.js';
 import { dayReminderPush, restTimerPush, testPush } from './push-messages.js';
@@ -40,6 +42,9 @@ import { EXERCISES } from './coach/core/library-data.js';
 const PORT = +(process.env.PORT || 3000);
 const DATA = process.env.DATA_DIR || '/data';
 const SAAS_ENABLED = process.env.SAAS_ENABLED === '1' || process.env.SAAS_ENABLED === 'true';
+const SAAS_EMAIL_OTP_ENABLED = /^(1|true|yes|on)$/i.test(process.env.SAAS_EMAIL_OTP_ENABLED || '');
+const SAAS_INVITES_V2_ENABLED = /^(1|true|yes|on)$/i.test(process.env.SAAS_INVITES_V2_ENABLED || '');
+const EMAIL_DELIVERY = createEmailDelivery();
 const COLLAB_WORKOUTS_ENABLED = ['1', 'true'].includes(process.env.COLLAB_WORKOUTS_ENABLED);
 const RP_ID = process.env.RP_ID || 'localhost';
 const ORIGIN = process.env.ORIGIN || 'http://localhost:8080';
@@ -1026,6 +1031,29 @@ async function passkeyStepUp(user, body) {
   } catch { return false; }
 }
 
+async function consumeEmailOtpStepUp(user, token) {
+  if (!SAAS_ENABLED || !SAAS_EMAIL_OTP_ENABLED) return false;
+  const proof = parseEmailOtpStepUpProof(SECRET, token);
+  if (!proof || proof.uid !== user.id || proof.sv !== sessionVersion(user)) return false;
+  const db = await getSaasDb();
+  const actor = await ensureIdentity(db, user);
+  if (!actor || actor.status !== 'ACTIVE') return false;
+  return db.$transaction(async tx => {
+    const identity = await tx.verifiedEmailIdentity.findUnique({ where: { userId: actor.id } });
+    if (identity?.email !== proof.email) return false;
+    const now = new Date();
+    const claim = await tx.emailOtpChallenge.updateMany({
+      where: {
+        id: proof.challengeId, email: proof.email, legacyUid: user.id, purpose: 'PASSKEY_ADD',
+        sessionVersion: proof.sv,
+        verifiedAt: { not: null }, consumedAt: { not: null }, completedAt: null, expiresAt: { gt: now }
+      },
+      data: { completedAt: now }
+    });
+    return claim.count === 1;
+  });
+}
+
 // One password check against the account key `k` (loginTarget), counted as a failure for it and for the caller's
 // address before it runs, so that checks sent side by side cannot all start under the same
 // allowance (see the throttle above). Answers 429 itself and returns null when either is paused.
@@ -1084,6 +1112,12 @@ async function proveOwner(req, res, user, body, act) {
     if (await passkeyStepUp(user, body)) return 'passkey';
     audit(req, 'auth.proof.fail', { ok: false, user, msg: 'step-up-failed', act });
     json(res, 403, { error: 'the passkey could not be verified', code: 'passkey' });
+    return null;
+  }
+  if (act === 'passkey-add' && typeof body.emailProof === 'string') {
+    if (await consumeEmailOtpStepUp(user, body.emailProof)) return 'email-otp';
+    audit(req, 'auth.proof.fail', { ok: false, user, msg: 'email-step-up-failed', act });
+    json(res, 403, { error: 'the e-mail code could not be verified', code: 'code-invalid' });
     return null;
   }
   if (!passwordWayIn(user)) {
@@ -1896,6 +1930,8 @@ const routes = {
       ...(MEDIA_ON ? { media: mediaConfig(MEDIA_LIMITS) } : {}),
       ...(Object.keys(db.exerciseMedia).length ? { exercise_media: db.exerciseMedia } : {}),
       ...(SAAS_ENABLED && COLLAB_WORKOUTS_ENABLED ? { collab_workouts: true } : {}),
+      ...(SAAS_ENABLED && SAAS_EMAIL_OTP_ENABLED && EMAIL_DELIVERY.configured && !EMAIL_DELIVERY.sandbox ? { saas_email_otp: true } : {}),
+      ...(SAAS_ENABLED && SAAS_EMAIL_OTP_ENABLED && SAAS_INVITES_V2_ENABLED && EMAIL_DELIVERY.configured && !EMAIL_DELIVERY.sandbox ? { saas_invites_v2: true } : {}),
       ...(readSession(req) ? { coach: coachConfig.publicConfig() } : {})
     });
   },
@@ -2566,8 +2602,38 @@ const routes = {
   // a cycle. Every one of them is inert while the feature is unconfigured.
   ...coachRoutes({ json, readBody, readSession, requireAdmin }),
 
+  ...emailAuthRoutes({
+    json, readBody, readSession, getDb: getSaasDb, secret: SECRET, emailDelivery: EMAIL_DELIVERY, limitAddress,
+    legacyUserById: id => db.users.find(user => user.id === id) || null,
+    legacyUserWithEmail: email => db.users.find(user => normalizeEmail(user.email) === email) || null,
+    createLegacyEmailAccount: ({ id, name, challengeId, preferences }) => {
+      if (!/^[A-Za-z0-9_-]{16,128}$/.test(id) || typeof name !== 'string' || !name.trim()) throw new Error('invalid email account');
+      let user = db.users.find(row => row.id === id);
+      if (user) {
+        if (user.emailOtpChallengeId !== challengeId) throw new Error('email account recovery mismatch');
+      } else {
+        if (db.creds.some(row => row.userId === id) || fs.existsSync(stateFile(id))) throw new Error('email account id conflict');
+        user = { id, name: name.trim().slice(0, 40), created: new Date().toISOString(), emailOtpChallengeId: challengeId };
+        db.users.push(user);
+        saveDb();
+      }
+      const file = stateFile(id);
+      if (!fs.existsSync(file)) atomicWrite(file, JSON.stringify({ unit: preferences?.unit === 'lb' ? 'lb' : 'kg', lang: preferences?.lang || 'en' }), 0o600);
+      if (user.emailOtpChallengeId === challengeId) { delete user.emailOtpChallengeId; saveDb(); }
+      return user;
+    },
+    loginResponse: (req, res, user, extra = {}) => {
+      const body = { user: publicUser(user), ...extra };
+      if (sessionOf(req)?.bearer) return json(res, 200, { ...body, token: makeSession(user) });
+      json(res, 200, body, { 'Set-Cookie': sessionCookie(user) });
+    },
+    proveOwner,
+    saveProof: proof => { if (proof === 'passkey') saveDb(); }
+  }),
+
   ...saasRoutes({
-    json, readBody, readSession, getDb: getSaasDb,
+    json, readBody, readSession, getDb: getSaasDb, secret: SECRET, emailDelivery: EMAIL_DELIVERY,
+    limitAddress,
     legacyUserById: id => db.users.find(user => user.id === id) || null
   }),
 

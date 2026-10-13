@@ -59,6 +59,13 @@ enum InvitationType {
   CLIENT_RELATIONSHIP
 }
 
+enum EmailOtpPurpose {
+  SIGNUP
+  LOGIN
+  LINK_EMAIL
+  PASSKEY_ADD
+}
+
 enum AuditActorType {
   USER
   OPERATOR
@@ -80,6 +87,8 @@ model User {
   legacyUid            String?                        @db.VarChar(128)
   legacyUidHash        String?                        @unique @db.Char(64)
   displayName          String?                        @db.VarChar(120)
+  phone                String?                        @db.VarChar(16)
+  onboardingCompletedAt DateTime?                     @db.DateTime(3)
   status               UserStatus                     @default(ACTIVE)
   createdAt            DateTime                       @default(now()) @db.DateTime(3)
   updatedAt            DateTime                       @updatedAt @db.DateTime(3)
@@ -102,6 +111,45 @@ model User {
   updatedWorkoutSets   WorkoutSet[]                   @relation("SetUpdater")
   workoutOperations    WorkoutOperation[]
   workoutEvents        WorkoutEvent[]
+  verifiedEmail        VerifiedEmailIdentity?
+}
+
+model VerifiedEmailIdentity {
+  id         String   @id @default(uuid()) @db.Char(36)
+  userId     String   @unique @db.Char(36)
+  email      String   @unique @db.VarChar(254)
+  verifiedAt DateTime @db.DateTime(3)
+  source     String   @db.VarChar(40)
+  createdAt  DateTime @default(now()) @db.DateTime(3)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([verifiedAt])
+}
+
+model EmailOtpChallenge {
+  id                   String         @id @default(uuid()) @db.Char(36)
+  email                String         @db.VarChar(254)
+  purpose              EmailOtpPurpose
+  codeHash             String         @db.Char(64)
+  invitationId         String?        @db.Char(36)
+  legacyUid            String?        @db.VarChar(128)
+  registrationUid      String?        @db.VarChar(128)
+  sessionVersion       Int?
+  attempts             Int            @default(0)
+  expiresAt            DateTime       @db.DateTime(3)
+  registrationExpiresAt DateTime?     @db.DateTime(3)
+  verifiedAt           DateTime?      @db.DateTime(3)
+  consumedAt           DateTime?      @db.DateTime(3)
+  completedAt          DateTime?      @db.DateTime(3)
+  profilePreferences   Json?
+  deliveryStatus       String         @default("PENDING") @db.VarChar(16)
+  providerSubmissionId String?        @db.VarChar(255)
+  createdAt            DateTime       @default(now()) @db.DateTime(3)
+  invitation           OrganizationInvitation? @relation(fields: [invitationId], references: [id], onDelete: Restrict)
+
+  @@index([email, purpose, createdAt])
+  @@index([invitationId, createdAt])
+  @@index([expiresAt, consumedAt])
 }
 
 model PlatformAdmin {
@@ -201,6 +249,8 @@ model OrganizationInvitation {
   trainerUserId          String?         @db.Char(36)
   targetLegacyUid        String?         @db.VarChar(128)
   targetLegacyUidHash    String?         @db.Char(64)
+  targetEmail            String?         @db.VarChar(254)
+  invitationCodeHash     String?         @unique @db.Char(64)
   createdByUserId        String          @db.Char(36)
   createdByPlatformAdmin Boolean         @default(false)
   acceptedByUserId       String?         @db.Char(36)
@@ -208,6 +258,10 @@ model OrganizationInvitation {
   expiresAt              DateTime        @db.DateTime(3)
   acceptedAt             DateTime?       @db.DateTime(3)
   revokedAt              DateTime?       @db.DateTime(3)
+  deliveryStatus         String?         @db.VarChar(16)
+  sentAt                 DateTime?       @db.DateTime(3)
+  providerSubmissionId   String?         @db.VarChar(255)
+  emailChallenges        EmailOtpChallenge[]
   createdAt              DateTime        @default(now()) @db.DateTime(3)
   organization           Organization    @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   createdBy              User            @relation("InvitationCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)

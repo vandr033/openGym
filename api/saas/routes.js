@@ -1,12 +1,19 @@
 import { appendAudit } from './audit.js';
-import { createInvitation, invitationHash } from './invitations.js';
+import { createInvitation, invitationHash, rotateInvitation } from './invitations.js';
+import { invitationCodeHash, keyedHash } from './email-security.js';
 import { ensureIdentity } from './identity.js';
 import { ACCESS_SCOPES, MEMBERSHIP_ROLES, canManageOrganization, hasPlatformAdmin, organizationRole } from './policy.js';
+import { maskEmail, normalizeEmail } from '../password.js';
+import { createWindow } from '../rate-limit.js';
 
 const ENABLED = process.env.SAAS_ENABLED === '1' || process.env.SAAS_ENABLED === 'true';
+const INVITES_V2_ENABLED = /^(1|true|yes|on)$/i.test(process.env.SAAS_INVITES_V2_ENABLED || '');
+const OTP_ENABLED = /^(1|true|yes|on)$/i.test(process.env.SAAS_EMAIL_OTP_ENABLED || '');
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const INVITE_DAYS_MAX = 30;
 const GRANT_DAYS_MAX = 365;
+// shortcut: this abuse counter resets on restart and is local to one API process; use shared storage before adding replicas.
+const INVITATION_CODE_ATTEMPTS = createWindow({ max: 10, windowMs: 60 * 60000, maxKeys: 10000 });
 
 class SaasError extends Error {
   constructor(status, message, code) { super(message); this.status = status; this.code = code; }
@@ -64,8 +71,8 @@ async function activeLegacyUser(legacyUserById, legacyUid) {
   return user;
 }
 
-async function createAuditedInvitation(tx, input, actor, legacyUid) {
-  const created = await createInvitation(tx, input);
+async function createAuditedInvitation(tx, input, actor, legacyUid, secret) {
+  const created = await createInvitation(tx, input, secret);
   await appendAudit(tx, {
     actorUserId: actor.id, actorLegacyUid: legacyUid,
     targetUserId: input.targetUserId || null,
@@ -78,8 +85,39 @@ async function createAuditedInvitation(tx, input, actor, legacyUid) {
       id: created.invitation.id, type: created.invitation.type,
       role: created.invitation.role, expiresAt: created.invitation.expiresAt
     },
-    token: created.token
+    token: created.token,
+    ...(created.code ? { code: created.code } : {})
   };
+}
+
+async function sendInvitationEmail(db, invitation, organization, secrets, emailDelivery, targetEmail) {
+  if (!emailDelivery?.configured) {
+    await db.organizationInvitation.update({ where: { id: invitation.id }, data: { deliveryStatus: 'UNCONFIGURED', providerSubmissionId: null } });
+    return 'UNCONFIGURED';
+  }
+  const appUrl = (process.env.PUBLIC_APP_URL || process.env.ORIGIN || 'http://localhost:8080').replace(/\/$/, '');
+  let providerAccepted = false, providerSubmissionId = null;
+  try {
+    const result = await emailDelivery.send({
+      to: targetEmail || invitation.targetEmail,
+      subject: `Invitation to ${organization.name}`,
+      text: `You are invited to ${organization.name} as ${invitation.role || 'CLIENT'}.\n\nOpen ${appUrl}/#/join/${secrets.token}\nInvitation code: ${secrets.code}\nExpires: ${invitation.expiresAt.toISOString()}`
+    });
+    if (!['ACCEPTED', 'SANDBOX', 'SIMULATED'].includes(result?.status)) throw Object.assign(new Error('email delivery failed'), { outcome: 'unknown' });
+    providerAccepted = true;
+    providerSubmissionId = result.submissionId || null;
+    const status = result.status;
+    await db.organizationInvitation.update({ where: { id: invitation.id }, data: {
+      deliveryStatus: status, sentAt: status === 'ACCEPTED' ? new Date() : null,
+      providerSubmissionId
+    } });
+    return status;
+  } catch (error) {
+    const status = error?.outcome === 'unknown' || providerAccepted ? 'UNKNOWN' : 'FAILED';
+    await db.organizationInvitation.update({ where: { id: invitation.id }, data: { deliveryStatus: status, sentAt: null, providerSubmissionId } });
+    console.warn(JSON.stringify({ event: 'saas.email.invitation.delivery_failed', outcome: status.toLowerCase(), code: error?.code || 'unknown' }));
+    return status;
+  }
 }
 
 async function requireOrganization(db, actor, organizationId, roles) {
@@ -162,12 +200,30 @@ async function revokeOrganizationUserAccess(tx, organizationId, userId, actor, l
   }
 }
 
-async function acceptInvitation(db, invitationId, actor, legacyUser) {
+export async function acceptInvitation(db, invitationId, actor, legacyUser) {
+  return db.$transaction(tx => acceptInvitationTx(tx, invitationId, actor, legacyUser));
+}
+
+export async function acceptInvitationTx(tx, invitationId, actor, legacyUser) {
   const now = new Date();
-  return db.$transaction(async tx => {
     const invitation = await tx.organizationInvitation.findUnique({ where: { id: invitationId } });
-    if (!invitation || invitation.acceptedAt || invitation.revokedAt || invitation.expiresAt <= now) notFound();
+    if (!invitation) notFound();
+    if (invitation.acceptedAt) {
+      if (invitation.acceptedByUserId !== actor.id) notFound();
+      const membership = invitation.type === 'MEMBERSHIP'
+        ? await tx.organizationMembership.findUnique({ where: { organizationId_userId: { organizationId: invitation.organizationId, userId: actor.id } } }) : null;
+      const enrollment = invitation.type === 'CLIENT_RELATIONSHIP'
+        ? await tx.clientOrganizationEnrollment.findUnique({ where: { organizationId_clientUserId: { organizationId: invitation.organizationId, clientUserId: actor.id } } }) : null;
+      const relationship = invitation.type === 'CLIENT_RELATIONSHIP' && invitation.trainerUserId
+        ? await tx.trainerClientRelationship.findUnique({ where: { organizationId_trainerUserId_clientUserId: { organizationId: invitation.organizationId, trainerUserId: invitation.trainerUserId, clientUserId: actor.id } } }) : null;
+      return { invitationId: invitation.id, membership, enrollment, relationship };
+    }
+    if (invitation.revokedAt || invitation.expiresAt <= now) notFound();
     if (invitation.targetLegacyUid && invitation.targetLegacyUid !== String(legacyUser.id)) notFound();
+    if (invitation.targetEmail) {
+      const emailIdentity = await tx.verifiedEmailIdentity.findUnique({ where: { email: invitation.targetEmail }, select: { userId: true } });
+      if (emailIdentity?.userId !== actor.id) notFound();
+    }
     const organization = await tx.organization.findFirst({ where: { id: invitation.organizationId, status: 'ACTIVE' } });
     if (!organization) notFound();
 
@@ -264,10 +320,10 @@ async function acceptInvitation(db, invitationId, actor, legacyUser) {
       metadata: { type: invitation.type }
     });
     return { invitationId: invitation.id, membership, enrollment, relationship };
-  });
 }
 
-export function saasRoutes({ json, readBody, readSession, getDb, legacyUserById }) {
+export function saasRoutes({ json, readBody, readSession, getDb, legacyUserById, secret, emailDelivery, limitAddress = req => req.socket?.remoteAddress || 'unknown' }) {
+  const invitesReady = INVITES_V2_ENABLED && OTP_ENABLED && !!emailDelivery?.configured;
   const unavailable = res => json(res, 503, { error: 'SaaS is temporarily unavailable' });
   const handle = (key, fn) => async (req, res) => {
     if (!ENABLED) return json(res, 404, { error: 'not found' });
@@ -287,33 +343,46 @@ export function saasRoutes({ json, readBody, readSession, getDb, legacyUserById 
       return unavailable(res);
     }
   };
+  const inviteHandle = (key, fn) => {
+    const route = handle(key, fn);
+    return (req, res) => invitesReady ? route(req, res) : json(res, 404, { error: 'not found' });
+  };
 
   return {
     'POST /api/v2/platform/organizations': handle('POST /api/v2/platform/organizations', async (req, res, { db, actor, legacyUser }) => {
       if (!await hasPlatformAdmin(db, actor.id)) notFound();
       const body = await readBody(req);
-      assertKeys(body, ['type', 'name', 'slug', 'ownerLegacyUid']);
+      assertKeys(body, ['type', 'name', 'slug', 'ownerLegacyUid', 'ownerEmail', 'sendEmail']);
+      if (body.sendEmail !== undefined && typeof body.sendEmail !== 'boolean') invalid('sendEmail must be a boolean');
       if (!['GYM', 'TRAINER_BUSINESS'].includes(body.type)) invalid('type must be GYM or TRAINER_BUSINESS');
       const name = validName(body.name, 'name'), slug = validSlug(body.slug);
-      const targetLegacyUser = await activeLegacyUser(legacyUserById, body.ownerLegacyUid);
+      if ((body.ownerLegacyUid == null) === (body.ownerEmail == null)) invalid('provide exactly one of ownerLegacyUid or ownerEmail');
+      if (body.ownerEmail != null && !invitesReady) notFound();
+      const targetEmail = body.ownerEmail == null ? null : normalizeEmail(body.ownerEmail);
+      if (body.ownerEmail != null && !targetEmail) invalid('ownerEmail is invalid');
+      if (body.sendEmail && !targetEmail) invalid('sendEmail requires ownerEmail');
+      const targetLegacyUser = body.ownerLegacyUid == null ? null : await activeLegacyUser(legacyUserById, body.ownerLegacyUid);
       const result = await db.$transaction(async tx => {
-        const owner = await ensureIdentity(tx, targetLegacyUser);
-        if (!owner || owner.status !== 'ACTIVE') notFound();
+        const owner = targetLegacyUser ? await ensureIdentity(tx, targetLegacyUser) : null;
+        if (targetLegacyUser && (!owner || owner.status !== 'ACTIVE')) notFound();
         const organization = await tx.organization.create({ data: { type: body.type, name, slug } });
         const invitation = await createAuditedInvitation(tx, {
           organizationId: organization.id, type: 'MEMBERSHIP', role: 'OWNER',
-          targetLegacyUid: targetLegacyUser.id, targetUserId: owner.id,
+          targetLegacyUid: targetLegacyUser?.id, targetEmail, targetUserId: owner?.id,
           createdByUserId: actor.id, createdByPlatformAdmin: true, expiresInDays: 7
-        }, actor, legacyUser.id);
+        }, actor, legacyUser.id, secret);
         await appendAudit(tx, {
           actorUserId: actor.id, actorLegacyUid: legacyUser.id,
-          targetUserId: owner.id, organizationId: organization.id,
+          targetUserId: owner?.id || null, organizationId: organization.id,
           action: 'organization.created', entityType: 'Organization', entityId: organization.id,
           metadata: { type: organization.type, slug: organization.slug }
         });
         return { organization, ownerInvitation: invitation };
       });
-      json(res, 201, { organization: publicOrg(result.organization), ownerInvitation: result.ownerInvitation });
+      const deliveryStatus = body.sendEmail
+        ? await sendInvitationEmail(db, result.ownerInvitation.invitation, result.organization, result.ownerInvitation, emailDelivery, targetEmail)
+        : 'NOT_SENT';
+      json(res, 201, { organization: publicOrg(result.organization), ownerInvitation: { ...result.ownerInvitation, deliveryStatus } });
     }),
 
     'GET /api/v2/platform/organizations': handle('GET /api/v2/platform/organizations', async (_req, res, { db, actor }) => {
@@ -341,7 +410,103 @@ export function saasRoutes({ json, readBody, readSession, getDb, legacyUserById 
         const prior = rows.get(row.organizationId);
         rows.set(row.organizationId, { ...publicOrg(row.organization), membershipRole: prior?.membershipRole || null, enrolledAsClient: true });
       }
-      json(res, 200, { organizations: [...rows.values()] });
+      json(res, 200, { userId: actor.id, organizations: [...rows.values()] });
+    }),
+
+    'GET /api/v2/organizations/:orgId/members': inviteHandle('GET /api/v2/organizations/:orgId/members', async (req, res, { db, actor }) => {
+      const { orgId } = req.saasParams;
+      await requireOrganization(db, actor, orgId, ['OWNER', 'ADMIN']);
+      const members = await db.organizationMembership.findMany({
+        where: { organizationId: orgId }, include: { user: { select: { id: true, displayName: true, status: true } } }, orderBy: [{ role: 'asc' }, { joinedAt: 'asc' }]
+      });
+      json(res, 200, { members: members.map(row => ({ userId: row.userId, displayName: row.user.displayName, role: row.role, status: row.status, userStatus: row.user.status, joinedAt: row.joinedAt })) });
+    }),
+
+    'GET /api/v2/organizations/:orgId/invitations': inviteHandle('GET /api/v2/organizations/:orgId/invitations', async (req, res, { db, actor }) => {
+      const { orgId } = req.saasParams;
+      const role = await requireOrganization(db, actor, orgId);
+      if (role === 'STAFF') notFound();
+      const invitations = await db.organizationInvitation.findMany({
+        where: { organizationId: orgId, ...(role === 'TRAINER' ? { OR: [{ createdByUserId: actor.id }, { trainerUserId: actor.id }] } : {}) },
+        orderBy: { createdAt: 'desc' }
+      });
+      const now = new Date();
+      json(res, 200, { invitations: invitations.map(row => ({
+        id: row.id, email: row.targetEmail ? maskEmail(row.targetEmail) : null,
+        type: row.type, role: row.type === 'CLIENT_RELATIONSHIP' ? 'CLIENT' : row.role,
+        trainerUserId: row.trainerUserId, createdAt: row.createdAt, expiresAt: row.expiresAt,
+        status: row.acceptedAt ? 'ACCEPTED' : row.revokedAt ? 'REVOKED' : row.expiresAt <= now ? 'EXPIRED' : 'PENDING',
+        deliveryStatus: row.deliveryStatus || 'NOT_SENT', sentAt: row.sentAt,
+        canManage: ['OWNER', 'ADMIN'].includes(role) || row.createdByUserId === actor.id
+      })) });
+    }),
+
+    'POST /api/v2/organizations/:orgId/invitations': inviteHandle('POST /api/v2/organizations/:orgId/invitations', async (req, res, { db, actor, legacyUser }) => {
+      const { orgId } = req.saasParams;
+      const actorRole = await requireOrganization(db, actor, orgId, ['OWNER', 'ADMIN', 'TRAINER']);
+      const body = await readBody(req);
+      assertKeys(body, ['role', 'email', 'trainerId', 'expiresInDays', 'sendEmail']);
+      if (typeof body.sendEmail !== 'undefined' && typeof body.sendEmail !== 'boolean') invalid('sendEmail must be a boolean');
+      const email = normalizeEmail(body.email);
+      if (!email) invalid('email is invalid');
+      const days = parseDays(body.expiresInDays, 7, INVITE_DAYS_MAX);
+      const type = body.role === 'CLIENT' ? 'CLIENT_RELATIONSHIP' : 'MEMBERSHIP';
+      if (type === 'MEMBERSHIP') {
+        if (!MEMBERSHIP_ROLES.includes(body.role) || (body.role === 'OWNER' && actorRole !== 'OWNER') || (actorRole === 'TRAINER')) invalid('role is not allowed');
+        if (body.trainerId !== undefined) invalid('trainerId is only valid for a client invitation');
+      } else if (!['OWNER', 'ADMIN', 'TRAINER'].includes(actorRole) || typeof body.trainerId !== 'string' || !ID.test(body.trainerId)) {
+        invalid('a client invitation requires an eligible trainer');
+      }
+      const result = await db.$transaction(async tx => {
+        if (await tx.organizationInvitation.findFirst({ where: { organizationId: orgId, targetEmail: email, acceptedAt: null, revokedAt: null, expiresAt: { gt: new Date() } } })) {
+          fail(409, 'an active invitation already exists for this email', 'invitation_pending');
+        }
+        const emailIdentity = await tx.verifiedEmailIdentity.findUnique({ where: { email }, include: { user: { select: { legacyUid: true } } } });
+        let trainerUserId = null, targetLegacyUid = emailIdentity?.user?.legacyUid || null, targetUserId = emailIdentity?.userId || null;
+        if (type === 'CLIENT_RELATIONSHIP') {
+          trainerUserId = body.trainerId;
+          if (actorRole === 'TRAINER' && trainerUserId !== actor.id) notFound();
+          const trainer = await tx.organizationMembership.findFirst({
+            where: { organizationId: orgId, userId: trainerUserId, status: 'ACTIVE', role: { in: ['OWNER', 'ADMIN', 'TRAINER'] }, user: { status: 'ACTIVE' } }, select: { userId: true }
+          });
+          if (!trainer) notFound();
+          if (targetUserId && await tx.clientOrganizationEnrollment.findFirst({ where: { organizationId: orgId, clientUserId: targetUserId, status: 'ACTIVE' } })) fail(409, 'already enrolled', 'already_enrolled');
+        } else if (targetUserId) {
+          const current = await tx.organizationMembership.findUnique({ where: { organizationId_userId: { organizationId: orgId, userId: targetUserId } } });
+          if (current?.status === 'ACTIVE') fail(409, 'already a member', 'already_member');
+        }
+        return createAuditedInvitation(tx, {
+          organizationId: orgId, type, role: type === 'MEMBERSHIP' ? body.role : null,
+          trainerUserId, targetLegacyUid, targetUserId, targetEmail: email,
+          createdByUserId: actor.id, expiresInDays: days
+        }, actor, legacyUser.id, secret);
+      });
+      const deliveryStatus = body.sendEmail ? await sendInvitationEmail(db, result.invitation, await db.organization.findUnique({ where: { id: orgId } }), result, emailDelivery, email) : 'NOT_SENT';
+      json(res, 201, { ...result, deliveryStatus });
+    }),
+
+    'POST /api/v2/organizations/:orgId/invitations/:invitationId/resend': inviteHandle('POST /api/v2/organizations/:orgId/invitations/:invitationId/resend', async (req, res, { db, actor, legacyUser }) => {
+      const { orgId, invitationId } = req.saasParams;
+      if (!ID.test(invitationId)) notFound();
+      const body = await readBody(req);
+      assertKeys(body, ['sendEmail']);
+      if (typeof body.sendEmail !== 'undefined' && typeof body.sendEmail !== 'boolean') invalid('sendEmail must be a boolean');
+      const role = await requireOrganization(db, actor, orgId);
+      const invitation = await db.organizationInvitation.findFirst({ where: { id: invitationId, organizationId: orgId } });
+      if (!invitation || (!['OWNER', 'ADMIN'].includes(role) && invitation.createdByUserId !== actor.id)) notFound();
+      if (!invitation.targetEmail || invitation.acceptedAt || invitation.revokedAt || invitation.expiresAt <= new Date()) notFound();
+      const rotated = await db.$transaction(async tx => {
+        const current = await tx.organizationInvitation.findFirst({ where: { id: invitationId, organizationId: orgId, acceptedAt: null, revokedAt: null, expiresAt: { gt: new Date() } } });
+        if (!current) notFound();
+        const value = await rotateInvitation(tx, current, secret);
+        await appendAudit(tx, {
+          actorUserId: actor.id, actorLegacyUid: legacyUser.id, organizationId: orgId,
+          action: 'invitation.resent', entityType: 'OrganizationInvitation', entityId: invitationId
+        });
+        return value;
+      });
+      const deliveryStatus = body.sendEmail ? await sendInvitationEmail(db, rotated.invitation, await db.organization.findUnique({ where: { id: orgId } }), rotated, emailDelivery, invitation.targetEmail) : 'NOT_SENT';
+      json(res, 200, { invitation: { id: invitationId, expiresAt: rotated.invitation.expiresAt }, token: rotated.token, code: rotated.code, deliveryStatus });
     }),
 
     'POST /api/v2/organizations/:orgId/members/invitations': handle('POST /api/v2/organizations/:orgId/members/invitations', async (req, res, { db, actor, legacyUser }) => {
@@ -367,7 +532,7 @@ export function saasRoutes({ json, readBody, readSession, getDb, legacyUserById 
           organizationId: orgId, type: 'MEMBERSHIP', role: body.role,
           targetLegacyUid: targetLegacyUser?.id, targetUserId,
           createdByUserId: actor.id, expiresInDays: days
-        }, actor, legacyUser.id);
+        }, actor, legacyUser.id, secret);
       });
       json(res, 201, result);
     }),
@@ -391,16 +556,30 @@ export function saasRoutes({ json, readBody, readSession, getDb, legacyUserById 
           organizationId: orgId, type: 'CLIENT_RELATIONSHIP', trainerUserId: actor.id,
           targetLegacyUid: targetLegacyUser?.id, targetUserId,
           createdByUserId: actor.id, expiresInDays: days
-        }, actor, legacyUser.id);
+        }, actor, legacyUser.id, secret);
       });
       json(res, 201, result);
     }),
 
     'POST /api/v2/invitations/accept': handle('POST /api/v2/invitations/accept', async (req, res, { db, actor, legacyUser }) => {
       const body = await readBody(req);
-      assertKeys(body, ['token']);
-      if (typeof body.token !== 'string' || !/^[A-Za-z0-9_-]{40,50}$/.test(body.token)) notFound();
-      const invitation = await db.organizationInvitation.findUnique({ where: { tokenHash: invitationHash(body.token) } });
+      assertKeys(body, ['token', 'code']);
+      if ((body.token == null) === (body.code == null)) invalid('provide exactly one invitation token or code');
+      let invitation;
+      if (body.token != null) {
+        if (typeof body.token !== 'string' || !/^[A-Za-z0-9_-]{40,50}$/.test(body.token)) notFound();
+        invitation = await db.organizationInvitation.findUnique({ where: { tokenHash: invitationHash(body.token) } });
+      } else {
+        if (!INVITES_V2_ENABLED) notFound();
+        if (typeof body.code !== 'string' || !/^\d{6}$/.test(body.code)) notFound();
+        const emailIdentity = await db.verifiedEmailIdentity.findUnique({ where: { userId: actor.id } });
+        if (!emailIdentity) notFound();
+        const address = String(limitAddress(req) || 'unknown').slice(0, 80);
+        const wait = INVITATION_CODE_ATTEMPTS.take(`${keyedHash(secret, 'rate-invitation-email', emailIdentity.email)}:${keyedHash(secret, 'rate-invitation-address', address)}`);
+        if (wait) return json(res, 429, { error: 'too many invitation-code attempts', code: 'rate_limited', retryAfter: wait }, { 'Retry-After': String(wait) });
+        invitation = await db.organizationInvitation.findUnique({ where: { invitationCodeHash: invitationCodeHash(secret, emailIdentity.email, body.code) } });
+        if (invitation?.targetEmail !== emailIdentity.email) notFound();
+      }
       if (!invitation) notFound();
       const result = await acceptInvitation(db, invitation.id, actor, legacyUser);
       json(res, 200, result);
@@ -436,7 +615,7 @@ export function saasRoutes({ json, readBody, readSession, getDb, legacyUserById 
       let userIds;
       if (memberRole) {
         const memberships = await db.organizationMembership.findMany({
-          where: { organizationId: orgId, status: 'ACTIVE', role: { in: ['OWNER', 'TRAINER'] } },
+          where: { organizationId: orgId, status: 'ACTIVE', role: { in: ['OWNER', 'ADMIN', 'TRAINER'] } },
           select: { userId: true, role: true, user: { select: { displayName: true } } }
         });
         return json(res, 200, { trainers: memberships.map(row => ({ userId: row.userId, displayName: row.user.displayName, role: row.role })) });

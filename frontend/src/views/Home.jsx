@@ -130,7 +130,14 @@ export default function Home() {
 
     {user && config?.collab_workouts && <div className="card row between">
       <div><div className="lbl2">{t('Collaborative training')}</div><div className="small muted">{t('Open a server-authoritative workout shared with your coach.')}</div></div>
-      <Button size="sm" variant="tinted" icon="dumbbell" onClick={() => nav('/collab')}>{t('Open')}</Button>
+      <div className="row" style={{ gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+        {config?.saas_invites_v2 && <Button size="sm" variant="ghost" onClick={() => nav('/organization')}>{t('Organization')}</Button>}
+        <Button size="sm" variant="tinted" icon="dumbbell" onClick={() => nav('/collab')}>{t('Open')}</Button>
+      </div>
+    </div>}
+    {user && config?.saas_invites_v2 && !config?.collab_workouts && <div className="card row between">
+      <div><div className="lbl2">{t('Organization people')}</div><div className="small muted">{t('Manage your organization team and invitations.')}</div></div>
+      <Button size="sm" variant="tinted" onClick={() => nav('/organization')}>{t('Open')}</Button>
     </div>}
 
     {S.showWaterCard !== false && <div className="card">

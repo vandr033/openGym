@@ -37,6 +37,24 @@ services:
           echo "Exercise media already present. Skipping download."
         fi
 
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    command: ["--log-bin-trust-function-creators=1"]
+    environment:
+      MYSQL_DATABASE: opengym_saas
+      MYSQL_USER: opengym
+      MYSQL_PASSWORD: ${SAAS_MYSQL_PASSWORD:?Set a private SaaS runtime database password in Coolify}
+      MYSQL_ROOT_PASSWORD: ${SAAS_MYSQL_ROOT_PASSWORD:?Set a separate private SaaS MySQL root password in Coolify}
+    volumes:
+      - opengym_saas_mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u$${MYSQL_USER} -p$${MYSQL_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
   api:
     build:
       context: ./api
@@ -47,22 +65,36 @@ services:
 
     restart: unless-stopped
 
+    depends_on:
+      mysql:
+        condition: service_healthy
+
     environment:
       PORT: ${PORT:-3000}
       DATA_DIR: /data
       SAAS_ENABLED: ${SAAS_ENABLED:-0}
+      SAAS_EMAIL_OTP_ENABLED: ${SAAS_EMAIL_OTP_ENABLED:-0}
+      SAAS_INVITES_V2_ENABLED: ${SAAS_INVITES_V2_ENABLED:-0}
       COLLAB_WORKOUTS_ENABLED: ${COLLAB_WORKOUTS_ENABLED:-0}
       DATABASE_URL: ${SAAS_DATABASE_URL:-}
 
-      RP_ID: ${RP_ID}
-      ORIGIN: ${ORIGIN}
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-}
+      BREVO_API_KEY: ${BREVO_API_KEY:-}
+      BREVO_SENDER_EMAIL: ${BREVO_SENDER_EMAIL:-}
+      BREVO_SENDER_NAME: ${BREVO_SENDER_NAME:-OpenGym}
+      BREVO_TIMEOUT_MS: ${BREVO_TIMEOUT_MS:-10000}
+      BREVO_SANDBOX: ${BREVO_SANDBOX:-0}
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-}
+
+      RP_ID: ${RP_ID:?Set the SaaS WebAuthn RP ID in Coolify}
+      ORIGIN: ${ORIGIN:?Set the public SaaS origin in Coolify}
       RP_NAME: ${RP_NAME:-openGym}
 
       TRUST_PROXY: ${TRUST_PROXY:-1}
       SESSION_DAYS: ${SESSION_DAYS:-90}
 
       ADMIN_UIDS: ${ADMIN_UIDS:-}
-      INVITE_ONLY: ${INVITE_ONLY:-0}
+      INVITE_ONLY: ${INVITE_ONLY:-1}
       ALLOW_GUEST: ${ALLOW_GUEST:-1}
       PASSWORD_LOGIN: ${PASSWORD_LOGIN:-0}
 
@@ -105,7 +137,10 @@ services:
       - "host.docker.internal:host-gateway"
 
     environment:
-      DATABASE_URL: ${SAAS_DATABASE_URL:-}
+      DATABASE_URL: ${SAAS_MIGRATION_DATABASE_URL:-}
+    depends_on:
+      mysql:
+        condition: service_healthy
 
   web:
     build:
@@ -150,3 +185,4 @@ volumes:
   opengym_codex:
   opengym_media_img:
   opengym_media_gif:
+  opengym_saas_mysql:

@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
+import { spawn, spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { boundPort } from '../test/helpers.mjs';
 
 const API = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const connection = process.env.SAAS_TEST_DATABASE_URL;
@@ -17,6 +20,9 @@ if (!['localhost', '127.0.0.1', '::1', '[::1]'].includes(url.hostname)) {
 
 process.env.DATABASE_URL = connection;
 process.env.SAAS_ENABLED = '1';
+process.env.SAAS_EMAIL_OTP_ENABLED = '1';
+process.env.SAAS_INVITES_V2_ENABLED = '1';
+process.env.INVITE_ONLY = '0';
 process.env.COLLAB_WORKOUTS_ENABLED = '1';
 const prismaCli = path.join(API, 'node_modules', 'prisma', 'build', 'index.js');
 for (let run = 1; run <= 2; run++) {
@@ -32,6 +38,8 @@ const { getSaasDb, closeSaasDb } = await import('../saas/db.js');
 const { provisionPlatformAdmin, deactivateMappedIdentity, ensureIdentity, legacyUidHash } = await import('../saas/identity.js');
 const { canAccessClientScope } = await import('../saas/policy.js');
 const { matchSaasRoute, saasRoutes } = await import('../saas/routes.js');
+const { emailAuthRoutes } = await import('../saas/email-auth-routes.js');
+const { emailOtpStepUpProof } = await import('../saas/email-security.js');
 let db = await getSaasDb();
 const suffix = randomBytes(6).toString('hex');
 const users = new Map();
@@ -101,6 +109,45 @@ function sessionFixtureState(session) {
     }))
   };
 }
+async function startStepUpServer(users, secret) {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gym-email-step-up-'));
+  fs.writeFileSync(path.join(dataDir, 'secret'), secret, { mode: 0o600 });
+  fs.writeFileSync(path.join(dataDir, 'db.json'), JSON.stringify({ users, creds: [], subs: [], invites: [] }));
+  const child = spawn(process.execPath, ['server.js'], {
+    cwd: API, stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, PORT: '0', DATA_DIR: dataDir, DATABASE_URL: connection,
+      SAAS_ENABLED: '1', SAAS_EMAIL_OTP_ENABLED: '1', SAAS_INVITES_V2_ENABLED: '1',
+      PASSWORD_LOGIN: '0', ORIGIN: 'http://localhost:8080', RP_ID: 'localhost' }
+  });
+  let output = '';
+  child.stdout.on('data', chunk => { output += chunk; });
+  child.stderr.on('data', chunk => { output += chunk; });
+  try {
+    const port = await boundPort(child, () => output);
+    return {
+      api: `http://127.0.0.1:${port}`,
+      cookie(uid, version = 0) {
+        const payload = `${uid}:${Date.now() + 86400000}:${version}`;
+        return `gymsid=${payload}.${createHmac('sha256', secret).update(payload).digest('base64url')}`;
+      },
+      async post(pathname, body, cookie) {
+        const response = await fetch(`http://127.0.0.1:${port}${pathname}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin', Cookie: cookie },
+          body: JSON.stringify(body)
+        });
+        return { status: response.status, body: await response.json() };
+      },
+      close() {
+        child.kill('SIGKILL');
+        fs.rmSync(dataDir, { recursive: true, force: true });
+      }
+    };
+  } catch (error) {
+    child.kill('SIGKILL');
+    fs.rmSync(dataDir, { recursive: true, force: true });
+    throw error;
+  }
+}
 async function accept(user, token) {
   return request('POST', '/api/v2/invitations/accept', user, { token });
 }
@@ -112,6 +159,137 @@ async function enrollClient(clientUser, organizationId, token) {
 }
 
 try {
+  const jsonAccounts = new Map();
+  let verificationCode = null, interruptJsonWrite = true;
+  const emailRoutes = emailAuthRoutes({
+    json: (res, statusCode, body) => { res.statusCode = statusCode; res.body = body; },
+    readBody: req => req.body, readSession: () => null, getDb: async () => db,
+    secret: `mysql-email-test-${suffix}`,
+    emailDelivery: { configured: true, send: async mail => {
+      verificationCode = mail.text.match(/\b(\d{6})\b/)?.[1] || null;
+      return { status: 'SIMULATED' };
+    } },
+    limitAddress: () => '127.0.0.1',
+    legacyUserById: id => jsonAccounts.get(id) || users.get(id) || null,
+    legacyUserWithEmail: email => [...jsonAccounts.values()].find(user => user.email === email) || null,
+    createLegacyEmailAccount: async ({ id, name, challengeId }) => {
+      if (interruptJsonWrite) { interruptJsonWrite = false; throw new Error('simulated JSON-store interruption'); }
+      let user = jsonAccounts.get(id);
+      if (user && user.emailOtpChallengeId !== challengeId) throw new Error('email account recovery mismatch');
+      if (!user) {
+        user = { id, name, emailOtpChallengeId: challengeId };
+        jsonAccounts.set(id, user);
+      }
+      delete user.emailOtpChallengeId;
+      return user;
+    },
+    loginResponse: (_req, res, user, extra = {}) => {
+      res.statusCode = 200; res.body = { user, ...extra };
+    },
+    proveOwner: async () => 'test-proof', inviteOnly: false
+  });
+  const emailRequest = async (method, body) => {
+    const res = {};
+    await emailRoutes[method]({ body, headers: {} }, res);
+    return res;
+  };
+  const testEmail = `mysql-${suffix}@example.test`;
+  const issued = await emailRequest('POST /api/v2/auth/email/request', { email: testEmail, purpose: 'INVITATION' });
+  assert.equal(issued.statusCode, 202, JSON.stringify(issued.body));
+  assert.match(verificationCode, /^\d{6}$/);
+  const claims = await Promise.all([1, 2].map(() => emailRequest('POST /api/v2/auth/email/verify', {
+    challengeId: issued.body.challengeId, code: verificationCode
+  })));
+  assert.deepEqual(claims.map(result => result.statusCode).sort(), [200, 400], 'MySQL compare-and-swap allows one concurrent OTP redemption');
+
+  const signupIssued = await emailRequest('POST /api/v2/auth/email/request', { email: `signup-${suffix}@example.test`, purpose: 'INVITATION' });
+  assert.equal(signupIssued.statusCode, 202, JSON.stringify(signupIssued.body));
+  const signupCode = verificationCode;
+  const signupVerified = await emailRequest('POST /api/v2/auth/email/verify', {
+    challengeId: signupIssued.body.challengeId, code: signupCode
+  });
+  assert.equal(signupVerified.statusCode, 200, JSON.stringify(signupVerified.body));
+  assert.equal(signupVerified.body.status, 'registration_required');
+  const registrationState = signupVerified.body.registrationState;
+  const signupChallenge = await db.emailOtpChallenge.findUnique({ where: { id: signupIssued.body.challengeId } });
+  const complete = () => emailRequest('POST /api/v2/onboarding/complete', {
+    registrationState, name: 'MySQL OTP onboarding', preferences: { unit: 'kg', lang: 'en' }
+  });
+  const interrupted = await complete();
+  assert.equal(interrupted.statusCode, 503, 'JSON write interruption happens after the SQL onboarding transaction commits');
+  const committedIdentity = await db.verifiedEmailIdentity.findUnique({ where: { email: `signup-${suffix}@example.test` }, include: { user: true } });
+  assert.equal(committedIdentity?.user?.legacyUid, signupChallenge.registrationUid);
+  assert.ok((await db.emailOtpChallenge.findUnique({ where: { id: signupChallenge.id } })).completedAt);
+  const recovered = await complete();
+  assert.equal(recovered.statusCode, 200, JSON.stringify(recovered.body));
+  assert.equal(recovered.body.user.id, signupChallenge.registrationUid);
+  const retried = await complete();
+  assert.equal(retried.statusCode, 200, JSON.stringify(retried.body));
+  assert.equal(jsonAccounts.size, 1, 'onboarding retries reuse one legacy account');
+  const secondIdentityUser = makeUser('SaaS duplicate e-mail constraint probe');
+  const secondIdentityActor = await ensureIdentity(db, secondIdentityUser);
+  await assert.rejects(db.verifiedEmailIdentity.create({ data: {
+    userId: secondIdentityActor.id, email: `signup-${suffix}@example.test`, verifiedAt: new Date(), source: 'test'
+  } }), error => error?.code === 'P2002', 'a verified e-mail can belong to only one SQL identity');
+  await assert.rejects(db.verifiedEmailIdentity.create({ data: {
+    userId: committedIdentity.user.id, email: `another-${suffix}@example.test`, verifiedAt: new Date(), source: 'test'
+  } }), error => error?.code === 'P2002', 'a SQL identity can own only one verified e-mail');
+
+  const stepUser = makeUser('MySQL email step-up user');
+  const otherStepUser = makeUser('MySQL other step-up user');
+  const stepIdentity = await ensureIdentity(db, stepUser);
+  const stepEmail = `step-up-${suffix}@example.test`;
+  await db.verifiedEmailIdentity.create({ data: {
+    userId: stepIdentity.id, email: stepEmail, verifiedAt: new Date(), source: 'test'
+  } });
+  const stepSecret = randomBytes(32).toString('hex');
+  const addStepChallenge = (overrides = {}) => db.emailOtpChallenge.create({ data: {
+    id: randomUUID(), email: stepEmail, purpose: 'PASSKEY_ADD', codeHash: '0'.repeat(64),
+    legacyUid: stepUser.id, sessionVersion: 0, attempts: 0, expiresAt: new Date(Date.now() + 60000),
+    verifiedAt: new Date(), consumedAt: new Date(), deliveryStatus: 'SIMULATED', ...overrides
+  } });
+  const stepServer = await startStepUpServer([stepUser, otherStepUser], stepSecret);
+  try {
+    const stepChallenge = await addStepChallenge();
+    const stepProof = emailOtpStepUpProof(stepSecret, {
+      challengeId: stepChallenge.id, uid: stepUser.id, email: stepEmail, sv: 0, exp: Date.now() + 60000
+    });
+    const simultaneous = await Promise.all([1, 2].map(() => stepServer.post(
+      '/api/account/passkeys/options', { emailProof: stepProof }, stepServer.cookie(stepUser.id)
+    )));
+    assert.deepEqual(simultaneous.map(result => result.status).sort(), [200, 403], 'MySQL step-up claim is single-use under concurrent passkey-option requests');
+    assert.equal((await db.emailOtpChallenge.findUnique({ where: { id: stepChallenge.id } })).completedAt instanceof Date, true);
+
+    const wrongOwnerChallenge = await addStepChallenge();
+    const wrongOwnerProof = emailOtpStepUpProof(stepSecret, {
+      challengeId: wrongOwnerChallenge.id, uid: otherStepUser.id, email: stepEmail, sv: 0, exp: Date.now() + 60000
+    });
+    const wrongOwner = await stepServer.post('/api/account/passkeys/options', { emailProof: wrongOwnerProof }, stepServer.cookie(otherStepUser.id));
+    assert.equal(wrongOwner.status, 403, 'another account cannot spend the first user’s verified-email challenge');
+    assert.equal((await db.emailOtpChallenge.findUnique({ where: { id: wrongOwnerChallenge.id } })).completedAt, null);
+
+    const expiredChallenge = await addStepChallenge({ expiresAt: new Date(Date.now() - 1000) });
+    const expiredProof = emailOtpStepUpProof(stepSecret, {
+      challengeId: expiredChallenge.id, uid: stepUser.id, email: stepEmail, sv: 0, exp: Date.now() + 60000
+    });
+    const expired = await stepServer.post('/api/account/passkeys/options', { emailProof: expiredProof }, stepServer.cookie(stepUser.id));
+    assert.equal(expired.status, 403, 'an expired SQL OTP challenge cannot step up');
+
+    const revokedChallenge = await addStepChallenge();
+    const revokedProof = emailOtpStepUpProof(stepSecret, {
+      challengeId: revokedChallenge.id, uid: stepUser.id, email: stepEmail, sv: 0, exp: Date.now() + 60000
+    });
+    const oldCookie = stepServer.cookie(stepUser.id);
+    assert.equal((await stepServer.post('/api/logout/all', {}, oldCookie)).status, 200);
+    assert.equal((await stepServer.post('/api/account/passkeys/options', { emailProof: revokedProof }, oldCookie)).status, 401,
+      'signing out everywhere revokes the old session');
+    assert.equal((await stepServer.post('/api/account/passkeys/options', { emailProof: revokedProof }, stepServer.cookie(stepUser.id, 1))).status, 403,
+      'a new session version cannot redeem an old session-bound OTP proof');
+    assert.equal((await db.emailOtpChallenge.findUnique({ where: { id: revokedChallenge.id } })).completedAt, null);
+  } finally {
+    stepServer.close();
+  }
+
   // A legacy admin bit is deliberately not consulted by this independent provisioning path.
   await provisionPlatformAdmin(db, platform, 'mysql integration test');
   const organizationResponse = await request('POST', '/api/v2/platform/organizations', platform, {
@@ -123,8 +301,12 @@ try {
   const storedInvitation = await db.organizationInvitation.findUnique({ where: { tokenHash: createHash('sha256').update(ownerInvitation.token).digest('hex') } });
   assert.ok(storedInvitation);
   assert.notEqual(storedInvitation.tokenHash, ownerInvitation.token);
-  assert.equal((await accept(owner, ownerInvitation.token)).statusCode, 200);
-  assert.equal((await accept(owner, ownerInvitation.token)).statusCode, 404, 'an invitation must be single-use');
+  const ownerAcceptance = await accept(owner, ownerInvitation.token);
+  assert.equal(ownerAcceptance.statusCode, 200);
+  const repeatedOwnerAcceptance = await accept(owner, ownerInvitation.token);
+  assert.equal(repeatedOwnerAcceptance.statusCode, 200, 'the same user can safely recover an accepted invitation');
+  assert.equal(repeatedOwnerAcceptance.body.membership.id, ownerAcceptance.body.membership.id, 'repeated acceptance does not duplicate membership');
+  assert.equal((await accept(trainer, ownerInvitation.token)).statusCode, 404, 'another user cannot reuse the accepted invitation');
 
   const trainerInvite = await request('POST', `/api/v2/organizations/${organization.id}/members/invitations`, owner, { role: 'TRAINER' });
   assert.equal(trainerInvite.statusCode, 201, JSON.stringify(trainerInvite.body));
@@ -601,7 +783,7 @@ try {
   const audit = await db.auditEvent.findFirst({ where: { organizationId: organization.id } });
   await assert.rejects(db.auditEvent.update({ where: { id: audit.id }, data: { action: 'tampered' } }), /append-only|45000|AuditEvent/i);
   await assert.rejects(db.auditEvent.delete({ where: { id: audit.id } }), /append-only|45000|AuditEvent/i);
-  console.log('MySQL integration passed: Phase 1 lifecycle and audit; workout session authorization, concurrency, CAS, idempotency restart, event replay, tombstones, and completion.');
+  console.log('MySQL integration passed: migrations/idempotence; Phase 1 lifecycle/audit; Phase 2.5 OTP concurrency, identity uniqueness, onboarding recovery, and session-bound passkey step-up; workout authorization, concurrency, CAS, idempotency restart, replay, tombstones, and completion.');
 } finally {
   await closeSaasDb();
 }

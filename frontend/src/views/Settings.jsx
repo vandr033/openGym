@@ -29,6 +29,7 @@ import Icon from '../components/Icon.jsx'
 import { ServerSyncSection, KeptChangesRows, leaveServer, connectServer, passkeySignIn } from '../components/ServerSync.jsx'
 import { passwordOn, PasswordRow, openPasswordSignIn, openPasswordRegister } from '../components/PasswordAuth.jsx'
 import { usePasskeys, PasskeysRow, DeviceLinkRow } from '../components/Passkeys.jsx'
+import VerifiedEmailRow from '../components/VerifiedEmailRow.jsx'
 import { Section, Row, SelectRow, Switch, Segmented, Button, TextField } from '../components/ui.jsx'
 
 export default function Settings() {
@@ -302,6 +303,7 @@ export default function Settings() {
       </> : user ? <>
         {user.admin && <Row icon="wrench" iconTint="var(--indigo)" title={t('Admin dashboard')} accessory="chevron" onClick={() => nav('/admin')} />}
         <PasskeysRow state={passkeys.st} changed={credsChanged} />
+        <VerifiedEmailRow enabled={!!config?.saas_email_otp} passkeys={passkeys.st?.passkeys?.length > 0} password={!!passkeys.st?.password} />
         <DeviceLinkRow state={passkeys.st} />
         <Row icon="link" iconTint="var(--blue)" title={t('Pair the mobile app')} subtitle={t('Connect the openGym app on your phone to this account.')} accessory="chevron"
           onClick={() => useUI.getState().openSheet(close => <PairSheet close={close} />)} />
