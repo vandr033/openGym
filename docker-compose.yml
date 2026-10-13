@@ -51,6 +51,8 @@ services:
       # cannot drift — change it in .env and both follow.
       - PORT=${PORT:-3000}
       - DATA_DIR=/data
+      - SAAS_ENABLED=${SAAS_ENABLED:-0}
+      - DATABASE_URL=${SAAS_DATABASE_URL:-}
       # The API is reachable only through the web container here, and that container overwrites
       # X-Forwarded-For / X-Real-IP with the real peer — so the sign-in throttle may count
       # requests by those headers instead of lumping everyone in as "the web container".
@@ -62,6 +64,38 @@ services:
       # is `tar czf … data/`, and a live refresh token must not end up inside it. Nothing here
       # needs backing up — if you lose it, sign the provider in again.
       - ./coach-auth:/coach-auth
+
+  # Tenant data is isolated from the legacy JSON volume and starts only when
+  # explicitly requested with `--profile saas`.
+  mysql:
+    image: mysql:8.4
+    profiles: ["saas"]
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: opengym_saas
+      MYSQL_USER: opengym
+      MYSQL_PASSWORD: ${SAAS_MYSQL_PASSWORD:-}
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+    volumes:
+      - opengym_saas_mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u$${MYSQL_USER} -p$${MYSQL_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # This target is run explicitly after backup and database provisioning.
+  migrate:
+    profiles: ["saas-migrate"]
+    build:
+      context: ./api
+      target: migrate
+    environment:
+      DATABASE_URL: ${SAAS_DATABASE_URL:-}
+    depends_on:
+      mysql:
+        condition: service_healthy
 
   # Builds the React frontend (multi-stage) and serves it, proxying /api → api
   # and the exercise media from the shared volume. Single origin for passkeys.
@@ -100,3 +134,6 @@ services:
     volumes:
       - ./media/img:/usr/share/nginx/html/img:ro
       - ./media/gif:/usr/share/nginx/html/gif:ro
+
+volumes:
+  opengym_saas_mysql:

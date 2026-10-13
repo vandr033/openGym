@@ -49,6 +49,8 @@ services:
     environment:
       PORT: ${PORT:-3000}
       DATA_DIR: /data
+      SAAS_ENABLED: ${SAAS_ENABLED:-0}
+      DATABASE_URL: ${SAAS_DATABASE_URL:-}
 
       RP_ID: ${RP_ID}
       ORIGIN: ${ORIGIN}
@@ -94,6 +96,36 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
+
+
+  mysql:
+    image: mysql:8.4
+    profiles: ["saas"]
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: opengym_saas
+      MYSQL_USER: opengym
+      MYSQL_PASSWORD: ${SAAS_MYSQL_PASSWORD:-}
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+    volumes:
+      - opengym_saas_mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u$${MYSQL_USER} -p$${MYSQL_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  migrate:
+    profiles: ["saas-migrate"]
+    build:
+      context: ./api
+      target: migrate
+    environment:
+      DATABASE_URL: ${SAAS_DATABASE_URL:-}
+    depends_on:
+      mysql:
+        condition: service_healthy
 
 
   web:
@@ -148,3 +180,4 @@ volumes:
   opengym_codex:
   opengym_media_img:
   opengym_media_gif:
+  opengym_saas_mysql:
