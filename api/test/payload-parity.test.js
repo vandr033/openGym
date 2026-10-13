@@ -11,7 +11,7 @@
    React-only syntax, the same reason mcp/'s own tests import frontend/src/lib directly. */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { tempData, sampleState } from './helpers.mjs';
+import { daysAgo, tempData, sampleState } from './helpers.mjs';
 import { isWarmupRow } from '../../frontend/src/lib/workout-model.js';
 import { readSession as frontendReadSession } from '../../frontend/src/lib/progression.js';
 
@@ -43,7 +43,7 @@ function reviewFor(entries) {
   const S = sampleState({
     routines: [{ id: 'r1', name: 'Full body A', ex: [PLAN] }],
     workouts: entries.map((en, i) => ({
-      id: 'w' + i, d: `2026-08-${String(i + 1).padStart(2, '0')}`, name: 'Full body A',
+      id: 'w' + i, d: daysAgo((entries.length - i) * 7), name: 'Full body A',
       start: 1000, end: 2000, entries: [en],
     })),
   });

@@ -10,7 +10,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { tempData, writeState, sampleState } from './helpers.mjs';
+import { daysAgo, tempData, writeState, sampleState } from './helpers.mjs';
 
 const DIR = tempData();
 const cfg = await import('../coach/config.js');
@@ -25,7 +25,7 @@ const REVIEW_NOCHANGE = { coach_contract: 1, nochange: true, reading: 'Plan not 
 const REVIEW_CHANGE = {
   coach_contract: 1,
   summary: 'Top sets at RPE 10 on the dumbbell press; one set less.',
-  evidence: { from: '2026-07-20', to: '2026-07-20', sessions: 1 },
+  evidence: { from: daysAgo(7), to: daysAgo(7), sessions: 1 },
   changes: [{ id: 'c1', type: 'sets', target: { routineId: 'r1', exId: '0001' }, before: 3, after: 2, why: 'stalls ≥ 2 and every top set at RPE 10' }],
   notes: []
 };
