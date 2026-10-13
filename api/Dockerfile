@@ -46,15 +46,22 @@ RUN apk upgrade --no-cache
 RUN adduser -D -H -s /sbin/nologin coach
 
 COPY package.json package-lock.json* ./
+COPY prisma ./prisma
+COPY prisma.config.ts ./
 # `npm ci` rather than `npm install`: the lockfile is the point of committing one, and the SDK's
 # per-platform runtime is resolved from it (musl on this base) rather than from whatever the
 # build host happened to be.
-RUN npm ci --omit=dev --omit=optional && npm cache clean --force
+RUN npm ci --omit=optional \
+ && npm run db:generate \
+ && npm prune --omit=dev --omit=optional \
+ && npm cache clean --force
 
 # Every module server.js imports from the api root has to be named here: the image carries nothing
 # else, and one that is missing only shows at boot, as ERR_MODULE_NOT_FOUND.
 COPY server.js push-messages.js verify-error.js password.js rate-limit.js passkeys-store.js device-link.js media.js ./
 COPY coach ./coach
+COPY saas ./saas
+COPY scripts/provision-platform-admin.js ./scripts/
 ENV NODE_ENV=production
 ENV PORT=3000
 EXPOSE 3000
@@ -64,6 +71,19 @@ HEALTHCHECK --interval=5m \
             --timeout=5s \
             --retries=3 \
             CMD wget --spider -q "http://127.0.0.1:${PORT}/api/health" || exit 1
+
+# One-shot image for explicitly applying checked-in migrations. It is separate from the API
+# image so normal startup and existing Coolify deployments never run schema changes.
+FROM node:22-alpine AS migrate
+WORKDIR /app
+COPY package.json package-lock.json* ./
+COPY prisma ./prisma
+COPY prisma.config.ts ./
+RUN npm ci --omit=optional \
+ && npm run db:generate \
+ && npm cache clean --force
+ENV NODE_ENV=production
+CMD ["npm", "run", "db:deploy"]
 
 # ---------------------------------------------------------------------------------------------
 # The opt-in target. Dropping --omit=optional is the whole difference: it pulls in

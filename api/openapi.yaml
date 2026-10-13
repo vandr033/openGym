@@ -1,6 +1,6 @@
 # openGym HTTP API — hand-written OpenAPI 3.1 spec.
-# Source of truth: api/server.js (a single framework-free Node file). Every route the
-# server registers is documented here; if you add a route there, add it here too.
+# Source of truth: api/server.js and its modular route files. Every route the server registers
+# is documented here; if you add a route, add it here too.
 # Browsable version: https://opengym.duarte-santos.ch/api.html
 openapi: 3.1.0
 
@@ -10,8 +10,8 @@ info:
   summary: Passkey (WebAuthn) auth + per-user state storage for openGym
   description: |
     The backend of [openGym](https://opengym.duarte-santos.ch) — a free, open-source
-    gym & body-weight tracker. A plain Node server, no framework, JSON-file storage,
-    HMAC-signed session cookies.
+    gym & body-weight tracker. A modular plain Node API with JSON-file profile storage,
+    optional MySQL tenant identity, and HMAC-signed session cookies.
 
     ### Authentication
     Sign-in is by **passkey** (WebAuthn, via `@simplewebauthn/server`). A successful
@@ -153,6 +153,10 @@ tags:
     description: >-
       AI Coach — plans, reviews and debriefs. Every route here answers 503 unless the
       instance has the Coach switched on and a provider connected.
+  - name: saas
+    description: >-
+      Optional tenant identity and permissions (`SAAS_ENABLED=1`). Platform administration
+      uses its separately provisioned `PlatformAdmin` role; legacy OpenGym admins do not inherit it.
 
 security:
   - cookieAuth: []
@@ -2986,6 +2990,281 @@ paths:
               example: { error: "unknown provider" }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v2/platform/organizations:
+    post:
+      tags: [saas]
+      operationId: createSaasOrganization
+      summary: Create a gym or trainer business
+      description: >-
+        Requires an active session, `SAAS_ENABLED=1`, and a separately provisioned PlatformAdmin
+        row. Creates the organization and a seven-day, one-use OWNER invitation for an existing
+        active OpenGym account. The invitation token is returned only in this response.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, name, slug, ownerLegacyUid]
+              properties:
+                type: { type: string, enum: [GYM, TRAINER_BUSINESS] }
+                name: { type: string, minLength: 1, maxLength: 120 }
+                slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,78}[a-z0-9])?$' }
+                ownerLegacyUid: { type: string, maxLength: 128 }
+      responses:
+        '201':
+          description: Organization created with an owner invitation.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  organization: { type: object, properties: { id: { type: string, format: uuid }, type: { type: string }, name: { type: string }, slug: { type: string }, status: { type: string }, createdAt: { type: string, format: date-time } } }
+                  ownerInvitation: { type: object, properties: { invitation: { type: object }, token: { type: string } } }
+        '400': { description: Invalid organization or owner fields. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Not provisioned as PlatformAdmin or owner account is unavailable. }
+        '409': { description: Organization slug already exists. }
+        '503': { description: SaaS identity database is unavailable. }
+    get:
+      tags: [saas]
+      operationId: listSaasOrganizations
+      summary: List organizations for platform administration
+      description: Requires the separately provisioned PlatformAdmin role. Returns organization metadata only; it does not grant access to client data.
+      responses:
+        '200': { description: Organizations visible to platform administration. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Not provisioned as PlatformAdmin. }
+        '503': { description: SaaS identity database is unavailable. }
+
+  /api/v2/organizations/me:
+    get:
+      tags: [saas]
+      operationId: listMyOrganizations
+      summary: List my organization memberships and client enrollments
+      description: Maps the authenticated legacy OpenGym user to one SQL identity on first use. Cookie, optional-password, passkey, and paired Bearer sessions use the same legacy UID mapping.
+      responses:
+        '200': { description: Active organization memberships and client enrollments. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: SQL identity is deactivated or deleted. }
+        '503': { description: SaaS identity database is unavailable. }
+
+  /api/v2/organizations/{orgId}/members/invitations:
+    post:
+      tags: [saas]
+      operationId: createOrganizationInvitation
+      summary: Invite a member to an organization
+      description: Requires an active OWNER or ADMIN membership. OWNER invitations can only be sent by an OWNER. The authenticated account must already exist; this token does not bypass `INVITE_ONLY` signup.
+      parameters:
+        - { name: orgId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role: { type: string, enum: [OWNER, ADMIN, TRAINER, STAFF] }
+                targetLegacyUid: { type: string, maxLength: 128, description: Optional account binding. }
+                expiresInDays: { type: integer, minimum: 1, maximum: 30, default: 7 }
+      responses:
+        '201': { description: Invitation and its one-time plaintext token. Only the token hash is stored. }
+        '400': { description: Invalid role, target, or expiration. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Organization or inviter is not authorized. }
+        '409': { description: Target is already an active member. }
+        '503': { description: SaaS identity database is unavailable. }
+
+  /api/v2/organizations/{orgId}/clients/invitations:
+    post:
+      tags: [saas]
+      operationId: createClientInvitation
+      summary: Invite a client to enroll and establish a trainer relationship
+      description: Requires an active OWNER, ADMIN, or TRAINER membership. Acceptance creates a scoped enrollment and relationship, but grants no workout-data access until the client separately authorizes scopes.
+      parameters:
+        - { name: orgId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                clientLegacyUid: { type: string, maxLength: 128, description: Optional account binding. }
+                expiresInDays: { type: integer, minimum: 1, maximum: 30, default: 7 }
+      responses:
+        '201': { description: Invitation and its one-time plaintext token. }
+        '400': { description: Invalid target or expiration. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Organization or inviter is not authorized. }
+        '503': { description: SaaS identity database is unavailable. }
+
+  /api/v2/invitations/accept:
+    post:
+      tags: [saas]
+      operationId: acceptSaasInvitation
+      summary: Accept an organization or client invitation
+      description: Requires an authenticated, active OpenGym account. The invitation is single-use, expires, binds to the authenticated legacy UID when targeted, and rechecks the inviter's current authority before acceptance. It is not a signup credential.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string, minLength: 40, maxLength: 50 }
+      responses:
+        '200': { description: Membership acceptance or client enrollment and relationship acceptance. }
+        '400': { description: Invalid request body. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Invitation is invalid, expired, revoked, targeted to another account, or its inviter lost authority. }
+        '409': { description: Account already has the invited membership. }
+        '503': { description: SaaS identity database is unavailable. }
+
+  /api/v2/organizations/{orgId}/invitations/{invitationId}:
+    delete:
+      tags: [saas]
+      operationId: revokeSaasInvitation
+      summary: Revoke an unused organization invitation
+      description: The invitation creator or an organization OWNER/ADMIN may revoke it. Accepted invitations cannot be reversed through this endpoint.
+      parameters:
+        - { name: orgId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: invitationId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Invitation revoked. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Invitation or authority is not available to this actor. }
+        '409': { description: Invitation is no longer active. }
+        '503': { description: SaaS identity database is unavailable. }
+
+  /api/v2/organizations/{orgId}/trainers:
+    get:
+      tags: [saas]
+      operationId: listOrganizationTrainers
+      summary: List trainers visible to an organization member or client
+      description: Members see active OWNER/TRAINER identities in their organization. An enrolled client sees only trainers with whom they have an active relationship.
+      parameters:
+        - { name: orgId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Limited trainer identity fields. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Organization is outside this actor's tenant scope. }
+        '503': { description: SaaS identity database is unavailable. }
+
+  /api/v2/organizations/{orgId}/clients:
+    get:
+      tags: [saas]
+      operationId: listOrganizationClients
+      summary: List the organization client roster
+      description: OWNER/ADMIN see active enrollments. TRAINER sees only clients with their own active relationship. STAFF and nonmembers do not receive the roster. This route returns identity/relationship metadata, not workouts.
+      parameters:
+        - { name: orgId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Limited client identity fields and, for a trainer's own clients, current granted scopes. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Organization is outside this actor's tenant scope. }
+        '503': { description: SaaS identity database is unavailable. }
+
+  /api/v2/organizations/{orgId}/members/{userId}:
+    put:
+      tags: [saas]
+      operationId: updateOrganizationMembership
+      summary: Change an organization's member role or status
+      description: OWNER manages nonowners; ADMIN can manage nonowner, nonadmin members. OWNER role changes are handled only through owner invitations. Suspending a member or changing their role to STAFF immediately suspends their tenant access, revokes relationships/grants, and ends their client enrollment.
+      parameters:
+        - { name: orgId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                role: { type: string, enum: [ADMIN, TRAINER, STAFF] }
+                status: { type: string, enum: [ACTIVE, SUSPENDED] }
+      responses:
+        '200': { description: Updated organization membership. }
+        '400': { description: Invalid or empty update. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Membership or authority is not available to this actor. }
+        '503': { description: SaaS identity database is unavailable. }
+    delete:
+      tags: [saas]
+      operationId: endOrganizationMembership
+      summary: Suspend a member or leave an organization
+      description: A member may leave their own nonowner membership. OWNER/ADMIN may suspend members within their authority. Relationship grants are revoked; user identities and audit history are retained.
+      parameters:
+        - { name: orgId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Membership suspended. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Membership or authority is not available to this actor. }
+        '503': { description: SaaS identity database is unavailable. }
+
+  /api/v2/organizations/{orgId}/clients/me:
+    delete:
+      tags: [saas]
+      operationId: leaveOrganizationAsClient
+      summary: End my client enrollment
+      description: Ends only the authenticated client's enrollment in this organization and revokes its trainer relationships/grants. Other organization enrollments and personal history are retained.
+      parameters:
+        - { name: orgId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Client enrollment ended. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Client enrollment was not found. }
+        '503': { description: SaaS identity database is unavailable. }
+
+  /api/v2/coaching/relationships/{id}/revoke:
+    post:
+      tags: [saas]
+      operationId: revokeTrainerClientRelationship
+      summary: Revoke a trainer-client relationship
+      description: The client, trainer, or active organization OWNER/ADMIN may revoke. All active grants on the relationship are revoked in the same transaction. Revocation does not delete client data.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Relationship revoked. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Relationship or authority is not available to this actor. }
+        '503': { description: SaaS identity database is unavailable. }
+
+  /api/v2/coaching/relationships/{id}/grants:
+    put:
+      tags: [saas]
+      operationId: setClientAccessGrants
+      summary: Set explicit client-authorized scopes
+      description: >-
+        Only the client may grant or revoke relationship scopes. Every nonempty grant set
+        requires an expiry within 365 days. `scopes: []` revokes all active scopes. Membership
+        or relationship status alone never grants workout-data access.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [scopes]
+              properties:
+                scopes:
+                  type: array
+                  uniqueItems: true
+                  items: { type: string, enum: [VIEW_TRAINING, START_SESSION, LOG_SETS, MANAGE_ASSIGNMENTS, VIEW_BODYWEIGHT] }
+                expiresAt: { type: string, format: date-time, description: Required when scopes is not empty. }
+      responses:
+        '200': { description: The current, unexpired grants for this relationship. }
+        '400': { description: Unsupported scope or invalid expiration. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Client, active relationship, enrollment, or trainer membership is not available. }
+        '503': { description: SaaS identity database is unavailable. }
 
 components:
   securitySchemes:

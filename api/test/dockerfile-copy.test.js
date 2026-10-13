@@ -32,4 +32,6 @@ test('every root-level module server.js needs is on the Dockerfile COPY line', (
   const missing = [...needed].filter(f => !copied.has(f));
   assert.deepEqual(missing, [], `add ${missing.join(', ')} to the COPY line in api/Dockerfile`);
   for (const f of copied) assert.ok(fs.existsSync(path.join(API, f)), `${f} is copied but does not exist`);
+  assert.match(read('Dockerfile'), /^COPY saas \.\/saas$/m, 'the API image must include the SaaS route modules');
+  assert.match(read('Dockerfile'), /npm run db:generate/, 'the API image must generate its Prisma client');
 });

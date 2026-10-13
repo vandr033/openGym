@@ -1,8 +1,8 @@
 /* openapi.yaml says of itself: "Every route the server registers is documented here; if you add
    a route there, add it here too." Sixteen of them were not — the whole AI Coach surface, user
-   and admin. Nothing was checking, so this does: the route table is one `'METHOD /path':` key per
-   handler in two files, and the spec is one `get:`/`post:` under one path key, both of which can
-   be read without a YAML parser (there is none in this package, by design).
+   and admin. Nothing was checking, so this does: the route table is one method/path key per
+   handler across the server and its route modules, and the spec is one get/post under one path
+   key, both of which can be read without a YAML parser.
 
    Plus the trap this test was written after: the doc generator renders the tags it knows and
    drops the rest in silence, so ten documented routes rendered nowhere at all. */
@@ -17,8 +17,9 @@ const ROOT = path.join(API, '..');
 const read = f => fs.readFileSync(f, 'utf8');
 const spec = read(path.join(API, 'openapi.yaml'));
 
-/** Every `'GET /api/x': async (req, res)` key in the route table. */
-const routeKeys = src => [...src.matchAll(/^\s*'(GET|POST|PUT|DELETE) (\/api\/[^']*)':/gm)].map(m => `${m[1]} ${m[2]}`);
+/** Every `'GET /api/x': async (req, res)` key in a modular route table. */
+const routeKeys = src => [...src.matchAll(/^\s*'(GET|POST|PUT|DELETE) (\/api\/[^']*)':/gm)]
+  .map(m => `${m[1]} ${m[2].replace(/:([A-Za-z0-9_]+)/g, '{$1}')}`);
 
 /** Every operation under `paths:`, as "METHOD /path". */
 function specOperations(yaml) {
@@ -39,7 +40,8 @@ function specOperations(yaml) {
 test('every route the server registers is in openapi.yaml, and nothing else is', () => {
   const routes = new Set([
     ...routeKeys(read(path.join(API, 'server.js'))),
-    ...routeKeys(read(path.join(API, 'coach', 'routes.js')))
+    ...routeKeys(read(path.join(API, 'coach', 'routes.js'))),
+    ...routeKeys(read(path.join(API, 'saas', 'routes.js')))
   ]);
   const ops = new Set(specOperations(spec));
   assert.ok(routes.size > 40, `only found ${routes.size} routes — the route table moved`);

@@ -9,7 +9,8 @@
     "start": "node server.js",
     "test": "node --test test/*.test.js",
     "db:generate": "prisma generate",
-    "db:deploy": "prisma migrate deploy"
+    "db:deploy": "prisma migrate deploy",
+    "test:mysql": "node scripts/test-mysql.mjs"
   },
   "dependencies": {
     "@prisma/adapter-mariadb": "7.10.0",

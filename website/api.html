@@ -221,6 +221,7 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   <a class="side-link" href="#media"><b>Media</b><span>Photos &amp; videos of your exercises &amp; workouts</span></a>
   <a class="side-link" href="#coach"><b>AI Coach</b><span>Plans, reviews, debriefs</span></a>
   <a class="side-link" href="#admin"><b>Admin</b><span>Users, media links, invites, audit log, Coach</span></a>
+  <a class="side-link" href="#saas"><b>SaaS</b><span>Organizations, memberships & client consent</span></a>
   <a class="side-link" href="#schemas"><b>Schemas</b><span>The state blob, the error shape &amp; co.</span></a>
   <p class="side-label">More</p>
   <a class="side-link" href="/"><b>Home</b><span>The tour, the demo, the download</span></a>
@@ -243,14 +244,14 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   <p class="api-facts">
     <span>OpenAPI 3.1.0</span>
     <span>openGym v1.3.9</span>
-    <span>71 endpoints</span>
+    <span>86 endpoints</span>
     <span>AGPL-3.0-or-later</span>
   </p>
 
   <section class="api-sec" id="overview">
     <h2>Overview</h2>
-    <p class="sub">Passkey (WebAuthn) auth + per-user state storage for openGym. One Node file, no framework, JSON-file
-       storage, HMAC-signed session cookies.</p>
+    <p class="sub">Passkey (WebAuthn) auth + per-user state storage for openGym. A modular Node API with JSON-file profile
+       storage, optional MySQL tenant identity, and HMAC-signed session cookies.</p>
     <div class="srv">
   <div class="srv-row"><code>/</code><span>Same origin as the openGym web app (the normal deployment)</span></div>
   <div class="srv-row"><code>https://opengym.example.com</code><span>Your self-hosted instance</span></div>
@@ -2587,6 +2588,62 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   </div>
 </details>
 
+<details class="ep" id="op-adminExerciseMediaSource">
+  <summary>
+    <span class="m post">POST</span>
+    <span class="ep-path"><code>/api/admin/exercise-media/source</code><span class="ep-chip admin">admin</span></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Fetch a custom exercise image or GIF</span>
+  </summary>
+  <div class="ep-body">
+<p>Downloads one public HTTPS image or GIF on behalf of an admin and returns the checked bytes. The client imports the bytes into the signed-in profile's custom-exercise media store, where the normal media sync uploads them to that profile's server storage.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Admin only — a signed-in session whose user is an admin (<code>ADMIN_UIDS</code> or <code>admin:true</code>), as the session cookie or a Bearer token.</span></p>
+
+<p class="ep-h">Request body <span class="p-hint">(JSON)</span></p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">url<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(uri, &le; 2048 chars)</span></span>
+    <span class="p-desc">Direct HTTPS JPEG</span>
+  </div>
+</div>
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">The checked image or GIF bytes.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">400</span>
+    <span class="p-desc">Invalid request or URL.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">403</span>
+    <span class="p-desc">Signed in, but not an admin. The attempt is recorded in the audit log.<span class="r-sig"><code>{&quot;error&quot;:&quot;forbidden&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">413</span>
+    <span class="p-desc">The image or GIF exceeds the configured size limit.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">422</span>
+    <span class="p-desc">The URL did not return a supported image or GIF.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">502</span>
+    <span class="p-desc">The server could not download the image or GIF.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">Server-side custom media storage is disabled.</span>
+  </div>
+    </div>
+  </div>
+</details>
+
 <details class="ep" id="op-adminPasswordReset">
   <summary>
     <span class="m post">POST</span>
@@ -3261,6 +3318,680 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   <div class="prow rrow">
     <span class="r-code s4">403</span>
     <span class="p-desc">Signed in, but not an admin. The attempt is recorded in the audit log.<span class="r-sig"><code>{&quot;error&quot;:&quot;forbidden&quot;}</code></span></span>
+  </div>
+    </div>
+  </div>
+</details>
+  </div>
+</section>
+
+<section class="api-sec" id="saas">
+  <h2>SaaS</h2>
+  <p class="sub">Optional tenant identity and permissions (<code>SAAS_ENABLED=1</code>). Platform administration uses its separately provisioned <code>PlatformAdmin</code> role; legacy OpenGym admins do not inherit it.</p>
+  <div class="eps">
+
+<details class="ep" id="op-createSaasOrganization">
+  <summary>
+    <span class="m post">POST</span>
+    <span class="ep-path"><code>/api/v2/platform/organizations</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Create a gym or trainer business</span>
+  </summary>
+  <div class="ep-body">
+<p>Requires an active session, <code>SAAS_ENABLED=1</code>, and a separately provisioned PlatformAdmin row. Creates the organization and a seven-day, one-use OWNER invitation for an existing active OpenGym account. The invitation token is returned only in this response.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session — the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+
+<p class="ep-h">Request body <span class="p-hint">(JSON)</span></p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">type<em class="p-req" title="required">required</em></span>
+    <span class="p-type">&quot;GYM&quot; | &quot;TRAINER_BUSINESS&quot;</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">name<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(&le; 120 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">slug<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">ownerLegacyUid<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(&le; 128 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">201</span>
+    <span class="p-desc">Organization created with an owner invitation.<span class="r-sig">{ organization: object, ownerInvitation: object }</span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">400</span>
+    <span class="p-desc">Invalid organization or owner fields.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">Not provisioned as PlatformAdmin or owner account is unavailable.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">409</span>
+    <span class="p-desc">Organization slug already exists.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">SaaS identity database is unavailable.</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-listSaasOrganizations">
+  <summary>
+    <span class="m get">GET</span>
+    <span class="ep-path"><code>/api/v2/platform/organizations</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">List organizations for platform administration</span>
+  </summary>
+  <div class="ep-body">
+<p>Requires the separately provisioned PlatformAdmin role. Returns organization metadata only; it does not grant access to client data.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session — the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+
+
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Organizations visible to platform administration.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">Not provisioned as PlatformAdmin.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">SaaS identity database is unavailable.</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-listMyOrganizations">
+  <summary>
+    <span class="m get">GET</span>
+    <span class="ep-path"><code>/api/v2/organizations/me</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">List my organization memberships and client enrollments</span>
+  </summary>
+  <div class="ep-body">
+<p>Maps the authenticated legacy OpenGym user to one SQL identity on first use. Cookie, optional-password, passkey, and paired Bearer sessions use the same legacy UID mapping.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session — the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+
+
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Active organization memberships and client enrollments.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">403</span>
+    <span class="p-desc">SQL identity is deactivated or deleted.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">SaaS identity database is unavailable.</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-createOrganizationInvitation">
+  <summary>
+    <span class="m post">POST</span>
+    <span class="ep-path"><code>/api/v2/organizations/{orgId}/members/invitations</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Invite a member to an organization</span>
+  </summary>
+  <div class="ep-body">
+<p>Requires an active OWNER or ADMIN membership. OWNER invitations can only be sent by an OWNER. The authenticated account must already exist; this token does not bypass <code>INVITE_ONLY</code> signup.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session — the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+<p class="ep-h">Query parameters</p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">orgId <span class="p-hint">(path)</span><em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(uuid)</span></span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+<p class="ep-h">Request body <span class="p-hint">(JSON)</span></p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">role<em class="p-req" title="required">required</em></span>
+    <span class="p-type">&quot;OWNER&quot; | &quot;ADMIN&quot; | &quot;TRAINER&quot; | &quot;STAFF&quot;</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">targetLegacyUid</span>
+    <span class="p-type">string <span class="p-hint">(&le; 128 chars)</span></span>
+    <span class="p-desc">Optional account binding.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">expiresInDays</span>
+    <span class="p-type">integer <span class="p-hint">(1&ndash;30, default 7)</span></span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">201</span>
+    <span class="p-desc">Invitation and its one-time plaintext token. Only the token hash is stored.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">400</span>
+    <span class="p-desc">Invalid role</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">Organization or inviter is not authorized.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">409</span>
+    <span class="p-desc">Target is already an active member.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">SaaS identity database is unavailable.</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-createClientInvitation">
+  <summary>
+    <span class="m post">POST</span>
+    <span class="ep-path"><code>/api/v2/organizations/{orgId}/clients/invitations</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Invite a client to enroll and establish a trainer relationship</span>
+  </summary>
+  <div class="ep-body">
+<p>Requires an active OWNER, ADMIN, or TRAINER membership. Acceptance creates a scoped enrollment and relationship, but grants no workout-data access until the client separately authorizes scopes.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session — the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+<p class="ep-h">Query parameters</p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">orgId <span class="p-hint">(path)</span><em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(uuid)</span></span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+<p class="ep-h">Request body <span class="p-hint">(JSON)</span></p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">clientLegacyUid</span>
+    <span class="p-type">string <span class="p-hint">(&le; 128 chars)</span></span>
+    <span class="p-desc">Optional account binding.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">expiresInDays</span>
+    <span class="p-type">integer <span class="p-hint">(1&ndash;30, default 7)</span></span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">201</span>
+    <span class="p-desc">Invitation and its one-time plaintext token.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">400</span>
+    <span class="p-desc">Invalid target or expiration.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">Organization or inviter is not authorized.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">SaaS identity database is unavailable.</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-acceptSaasInvitation">
+  <summary>
+    <span class="m post">POST</span>
+    <span class="ep-path"><code>/api/v2/invitations/accept</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Accept an organization or client invitation</span>
+  </summary>
+  <div class="ep-body">
+<p>Requires an authenticated, active OpenGym account. The invitation is single-use, expires, binds to the authenticated legacy UID when targeted, and rechecks the inviter's current authority before acceptance. It is not a signup credential.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session — the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+
+<p class="ep-h">Request body <span class="p-hint">(JSON)</span></p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">token<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(&le; 50 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Membership acceptance or client enrollment and relationship acceptance.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">400</span>
+    <span class="p-desc">Invalid request body.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">Invitation is invalid</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">409</span>
+    <span class="p-desc">Account already has the invited membership.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">SaaS identity database is unavailable.</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-revokeSaasInvitation">
+  <summary>
+    <span class="m delete">DELETE</span>
+    <span class="ep-path"><code>/api/v2/organizations/{orgId}/invitations/{invitationId}</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Revoke an unused organization invitation</span>
+  </summary>
+  <div class="ep-body">
+<p>The invitation creator or an organization OWNER/ADMIN may revoke it. Accepted invitations cannot be reversed through this endpoint.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session — the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+<p class="ep-h">Query parameters</p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">orgId <span class="p-hint">(path)</span><em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(uuid)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">invitationId <span class="p-hint">(path)</span><em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(uuid)</span></span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Invitation revoked.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">Invitation or authority is not available to this actor.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">409</span>
+    <span class="p-desc">Invitation is no longer active.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">SaaS identity database is unavailable.</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-listOrganizationTrainers">
+  <summary>
+    <span class="m get">GET</span>
+    <span class="ep-path"><code>/api/v2/organizations/{orgId}/trainers</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">List trainers visible to an organization member or client</span>
+  </summary>
+  <div class="ep-body">
+<p>Members see active OWNER/TRAINER identities in their organization. An enrolled client sees only trainers with whom they have an active relationship.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session — the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+<p class="ep-h">Query parameters</p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">orgId <span class="p-hint">(path)</span><em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(uuid)</span></span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Limited trainer identity fields.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">Organization is outside this actor's tenant scope.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">SaaS identity database is unavailable.</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-listOrganizationClients">
+  <summary>
+    <span class="m get">GET</span>
+    <span class="ep-path"><code>/api/v2/organizations/{orgId}/clients</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">List the organization client roster</span>
+  </summary>
+  <div class="ep-body">
+<p>OWNER/ADMIN see active enrollments. TRAINER sees only clients with their own active relationship. STAFF and nonmembers do not receive the roster. This route returns identity/relationship metadata, not workouts.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session — the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+<p class="ep-h">Query parameters</p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">orgId <span class="p-hint">(path)</span><em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(uuid)</span></span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Limited client identity fields and</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">Organization is outside this actor's tenant scope.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">SaaS identity database is unavailable.</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-updateOrganizationMembership">
+  <summary>
+    <span class="m put">PUT</span>
+    <span class="ep-path"><code>/api/v2/organizations/{orgId}/members/{userId}</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Change an organization's member role or status</span>
+  </summary>
+  <div class="ep-body">
+<p>OWNER manages nonowners; ADMIN can manage nonowner, nonadmin members. OWNER role changes are handled only through owner invitations. Suspending a member or changing their role to STAFF immediately suspends their tenant access, revokes relationships/grants, and ends their client enrollment.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session — the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+<p class="ep-h">Query parameters</p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">orgId <span class="p-hint">(path)</span><em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(uuid)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">userId <span class="p-hint">(path)</span><em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(uuid)</span></span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+<p class="ep-h">Request body <span class="p-hint">(JSON)</span></p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">role</span>
+    <span class="p-type">&quot;ADMIN&quot; | &quot;TRAINER&quot; | &quot;STAFF&quot;</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">status</span>
+    <span class="p-type">&quot;ACTIVE&quot; | &quot;SUSPENDED&quot;</span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Updated organization membership.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">400</span>
+    <span class="p-desc">Invalid or empty update.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">Membership or authority is not available to this actor.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">SaaS identity database is unavailable.</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-endOrganizationMembership">
+  <summary>
+    <span class="m delete">DELETE</span>
+    <span class="ep-path"><code>/api/v2/organizations/{orgId}/members/{userId}</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Suspend a member or leave an organization</span>
+  </summary>
+  <div class="ep-body">
+<p>A member may leave their own nonowner membership. OWNER/ADMIN may suspend members within their authority. Relationship grants are revoked; user identities and audit history are retained.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session — the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+<p class="ep-h">Query parameters</p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">orgId <span class="p-hint">(path)</span><em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(uuid)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">userId <span class="p-hint">(path)</span><em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(uuid)</span></span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Membership suspended.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">Membership or authority is not available to this actor.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">SaaS identity database is unavailable.</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-leaveOrganizationAsClient">
+  <summary>
+    <span class="m delete">DELETE</span>
+    <span class="ep-path"><code>/api/v2/organizations/{orgId}/clients/me</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">End my client enrollment</span>
+  </summary>
+  <div class="ep-body">
+<p>Ends only the authenticated client's enrollment in this organization and revokes its trainer relationships/grants. Other organization enrollments and personal history are retained.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session — the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+<p class="ep-h">Query parameters</p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">orgId <span class="p-hint">(path)</span><em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(uuid)</span></span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Client enrollment ended.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">Client enrollment was not found.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">SaaS identity database is unavailable.</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-revokeTrainerClientRelationship">
+  <summary>
+    <span class="m post">POST</span>
+    <span class="ep-path"><code>/api/v2/coaching/relationships/{id}/revoke</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Revoke a trainer-client relationship</span>
+  </summary>
+  <div class="ep-body">
+<p>The client, trainer, or active organization OWNER/ADMIN may revoke. All active grants on the relationship are revoked in the same transaction. Revocation does not delete client data.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session — the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+<p class="ep-h">Query parameters</p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">id <span class="p-hint">(path)</span><em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(uuid)</span></span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Relationship revoked.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">Relationship or authority is not available to this actor.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">SaaS identity database is unavailable.</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-setClientAccessGrants">
+  <summary>
+    <span class="m put">PUT</span>
+    <span class="ep-path"><code>/api/v2/coaching/relationships/{id}/grants</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Set explicit client-authorized scopes</span>
+  </summary>
+  <div class="ep-body">
+<p>Only the client may grant or revoke relationship scopes. Every nonempty grant set requires an expiry within 365 days. <code>scopes: []</code> revokes all active scopes. Membership or relationship status alone never grants workout-data access.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session — the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+<p class="ep-h">Query parameters</p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">id <span class="p-hint">(path)</span><em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(uuid)</span></span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+<p class="ep-h">Request body <span class="p-hint">(JSON)</span></p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">scopes<em class="p-req" title="required">required</em></span>
+    <span class="p-type">(&quot;VIEW_TRAINING&quot; | &quot;START_SESSION&quot; | &quot;LOG_SETS&quot; | &quot;MANAGE_ASSIGNMENTS&quot; | &quot;VIEW_BODYWEIGHT&quot;)[]</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">expiresAt</span>
+    <span class="p-type">string <span class="p-hint">(date-time)</span></span>
+    <span class="p-desc">Required when scopes is not empty.</span>
+  </div>
+</div>
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">The current</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">400</span>
+    <span class="p-desc">Unsupported scope or invalid expiration.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">Client</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">SaaS identity database is unavailable.</span>
   </div>
     </div>
   </div>

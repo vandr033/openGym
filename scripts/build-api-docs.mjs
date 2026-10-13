@@ -132,7 +132,8 @@ const TAGS = {
   // A tag missing from this map renders nowhere at all, silently — so every tag in the
   // spec needs a line here.
   coach: { title: 'AI Coach', side: 'Plans, reviews, debriefs' },
-  admin: { title: 'Admin', side: 'Users, media links, invites, audit log, Coach' }
+  admin: { title: 'Admin', side: 'Users, media links, invites, audit log, Coach' },
+  saas: { title: 'SaaS', side: 'Organizations, memberships & client consent' }
 }
 
 // "Admin: list all users" → "List all users": the section heading and the ADMIN
@@ -584,8 +585,8 @@ ${railTags}
 
   <section class="api-sec" id="overview">
     <h2>Overview</h2>
-    <p class="sub">${mdCell(spec.info.summary)}. One Node file, no framework, JSON-file
-       storage, HMAC-signed session cookies.</p>
+    <p class="sub">${mdCell(spec.info.summary)}. A modular Node API with JSON-file profile
+       storage, optional MySQL tenant identity, and HMAC-signed session cookies.</p>
     <div class="srv">${serversHtml}
     </div>
     <div class="ov-grid">${overviewCards}

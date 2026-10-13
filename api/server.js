@@ -16,6 +16,9 @@ import webpush from 'web-push';
 import * as coachConfig from './coach/config.js';
 import * as coachJobs from './coach/jobs.js';
 import { coachRoutes } from './coach/routes.js';
+import { saasRoutes, matchSaasRoute } from './saas/routes.js';
+import { getSaasDb } from './saas/db.js';
+import { deactivateMappedIdentity, legacyUidHash } from './saas/identity.js';
 import { startCadence } from './coach/cadence.js';
 import { startWarmup } from './coach/warmup.js';
 import { dayReminderPush, restTimerPush, testPush } from './push-messages.js';
@@ -35,6 +38,7 @@ import { EXERCISES } from './coach/core/library-data.js';
 
 const PORT = +(process.env.PORT || 3000);
 const DATA = process.env.DATA_DIR || '/data';
+const SAAS_ENABLED = process.env.SAAS_ENABLED === '1' || process.env.SAAS_ENABLED === 'true';
 const RP_ID = process.env.RP_ID || 'localhost';
 const ORIGIN = process.env.ORIGIN || 'http://localhost:8080';
 const RP_NAME = process.env.RP_NAME || 'openGym';
@@ -111,6 +115,18 @@ db.invites = db.invites || [];
 db.deviceLinks = db.deviceLinks || [];   // unused one-time device links, hashed (device-link.js)
 db.exerciseMedia = db.exerciseMedia && typeof db.exerciseMedia === 'object' && !Array.isArray(db.exerciseMedia) ? db.exerciseMedia : {};
 const isAdmin = user => !!user && (user.admin === true || ADMIN_UIDS.includes(user.id));
+async function syncSaasIdentityLifecycle(uid, actor, status) {
+  if (!SAAS_ENABLED && !process.env.DATABASE_URL) return true;
+  try {
+    const tenantDb = await getSaasDb();
+    if (!await tenantDb.user.findUnique({ where: { legacyUidHash: legacyUidHash(uid) }, select: { id: true } })) return true;
+    await deactivateMappedIdentity(tenantDb, uid, actor, status);
+    return true;
+  } catch (error) {
+    console.error('SaaS identity lifecycle sync failed', error?.code || error?.name || 'unknown error');
+    return !process.env.DATABASE_URL;
+  }
+}
 // 0600: db.json holds passkey credential material. It used to be covered by a blanket 0700 on
 // the whole directory; now that the directory stays traversable, the file carries its own mode.
 function saveDb() { atomicWrite(dbFile, JSON.stringify(db, null, 2), 0o600); }
@@ -2422,6 +2438,9 @@ const routes = {
     const u = db.users.find(x => x.id === body.id);
     if (!u) return json(res, 404, { error: 'no such user' });
     if (isAdmin(u)) return json(res, 400, { error: 'cannot disable an admin' });
+    if ((body.disabled || u.disabled) && !await syncSaasIdentityLifecycle(u.id, admin, 'DEACTIVATED')) {
+      return json(res, 503, { error: 'tenant identity store is unavailable' });
+    }
     u.disabled = !!body.disabled;
     if (u.disabled) presence.delete(u.id);   // drop them off "training now" at once
     // A device link made before the lock would otherwise still be waiting when it is lifted.
@@ -2444,6 +2463,9 @@ const routes = {
     if (!u) return json(res, 404, { error: 'no such user' });
     if (u.id === admin.id) return json(res, 400, { error: 'you cannot delete your own account' });
     if (isAdmin(u) && db.users.filter(isAdmin).length <= 1) return json(res, 400, { error: 'cannot delete the last admin' });
+    if (!await syncSaasIdentityLifecycle(u.id, admin, 'DELETED')) {
+      return json(res, 503, { error: 'tenant identity store is unavailable' });
+    }
     const name = u.name;
     db.users = db.users.filter(x => x.id !== u.id);
     db.creds = (db.creds || []).filter(c => c.userId !== u.id);
@@ -2541,6 +2563,11 @@ const routes = {
   // a cycle. Every one of them is inert while the feature is unconfigured.
   ...coachRoutes({ json, readBody, readSession, requireAdmin }),
 
+  ...saasRoutes({
+    json, readBody, readSession, getDb: getSaasDb,
+    legacyUserById: id => db.users.find(user => user.id === id) || null
+  }),
+
   /* ---------- photos & videos ---------- */
   // Absent, not refusing, when MEDIA_UPLOADS=0: a 404 is what a server from before the feature
   // answers, and the client already treats that as "this server does not store them".
@@ -2617,6 +2644,8 @@ const server = http.createServer(async (req, res) => {
     key = (req.method === 'HEAD' ? 'GET' : req.method) + ' /api/exercise-media/{id}/{kind}/{file}';
     req.exerciseMedia = { id: em[1], kind: em[2], hash: em[3], ext: em[4], url: url.pathname };
   }
+  const saasMatch = matchSaasRoute(routes, req.method, url.pathname);
+  if (saasMatch) { key = saasMatch.key; req.saasParams = saasMatch.params; }
   const handler = routes[key];
   if (!handler) return json(res, 404, { error: 'not found' });
   if (!csrfOk(req, key)) {
