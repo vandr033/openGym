@@ -365,10 +365,11 @@ test('changing a password takes the current one and signs out every other sessio
 
 // A sign-in with the old password that is still being checked when the password changes must not
 // come back with a session: signed after the change, it would carry the new session version and
-// outlive the "signed out everywhere" that the change is. Sign-ins every 20 ms from fresh addresses
-// straddle the change; whatever cookie any of them got, none may still work afterwards. Run once
+// outlive the "signed out everywhere" that the change is. Start four old-password checks before
+// the change so they are in flight while its proof uses the fifth account throttle slot. Run once
 // with a current hash and once with one made at older parameters, whose sign-in rehashes — a
-// second await before the cookie is signed.
+// second await before the cookie is signed. Later old-password attempts are genuine failures and
+// must still count toward the account pause.
 for (const [label, stored] of [['current', () => pwHash], ['older parameters', () => oldHash]]) {
   test(`sign-ins with the old password still running during a change get no lasting session (${label} hash)`, async t => {
     pwHash ??= await hashPassword(GOOD);
@@ -376,13 +377,9 @@ for (const [label, stored] of [['current', () => pwHash], ['older parameters', (
     const h = await startServer(t, { users: [user('u1', 'Ana', { pw: { h: stored(), set: new Date().toISOString() } })] });
     const owner = `gymsid=${mintSession('u1')}`;
     const next = 'a much better passphrase';
-    const attempts = [];
-    let change;
-    for (let i = 0; i < 30; i++) {
-      attempts.push(login(h, 'Ana', GOOD, `198.51.100.${10 + i}`));
-      if (i === 3) change = h.req('POST', '/api/account/password', { body: { next, current: GOOD }, cookie: owner, ip: '203.0.113.200' });
-      await new Promise(r => setTimeout(r, 20));
-    }
+    const attempts = Array.from({ length: 4 }, (_, i) => login(h, 'Ana', GOOD, `198.51.100.${10 + i}`));
+    await new Promise(r => setTimeout(r, 20));
+    const change = h.req('POST', '/api/account/password', { body: { next, current: GOOD }, cookie: owner, ip: '203.0.113.200' });
     const done = await change;
     assert.equal(done.status, 200, JSON.stringify(done.body));
     const answers = await Promise.all(attempts);
