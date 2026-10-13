@@ -52,6 +52,7 @@ services:
       - PORT=${PORT:-3000}
       - DATA_DIR=/data
       - SAAS_ENABLED=${SAAS_ENABLED:-0}
+      - COLLAB_WORKOUTS_ENABLED=${COLLAB_WORKOUTS_ENABLED:-0}
       - DATABASE_URL=${SAAS_DATABASE_URL:-}
       # The API is reachable only through the web container here, and that container overwrites
       # X-Forwarded-For / X-Real-IP with the real peer — so the sign-in throttle may count

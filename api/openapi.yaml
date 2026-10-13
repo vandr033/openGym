@@ -254,6 +254,12 @@ paths:
                       Present (and true) only when the instance runs with
                       PASSWORD_LOGIN=1 — the client then offers name-and-password
                       sign-in next to passkeys.
+                  collab_workouts:
+                    type: boolean
+                    const: true
+                    description: >-
+                      Present only when both SAAS_ENABLED=1 and COLLAB_WORKOUTS_ENABLED=1;
+                      the client then exposes its separate SQL-backed collaborative workout mode.
                   default_lang:
                     type: string
                     example: pt-BR
@@ -3266,6 +3272,176 @@ paths:
         '404': { description: Client, active relationship, enrollment, or trainer membership is not available. }
         '503': { description: SaaS identity database is unavailable. }
 
+  /api/v2/clients/{clientId}/workout-sessions/active:
+    get:
+      tags: [saas]
+      operationId: getClientActiveWorkoutSession
+      summary: Read the signed-in client's active collaborative workout
+      description: Requires both `SAAS_ENABLED=1` and `COLLAB_WORKOUTS_ENABLED=1`. This Phase 2 UI endpoint reads only the authenticated client's own active session. Collaborative rows never enter `/api/data`.
+      parameters:
+        - { name: clientId, in: path, required: true, schema: { type: string, description: Legacy OpenGym user ID or SQL UUID. } }
+      responses:
+        '200': { description: Active session, or `session: null`. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Feature disabled or client is not the signed-in user. }
+        '503': { description: SaaS database unavailable. }
+
+  /api/v2/clients/{clientId}/workout-sessions:
+    post:
+      tags: [saas]
+      operationId: startClientWorkoutSession
+      summary: Start or join a client-owned workout session
+      description: >-
+        Requires both SaaS flags. A client can start their own session; a trainer needs an active
+        relationship and `START_SESSION` grant in the supplied organization. A client's single
+        active SQL session is shared across organizations. The server generates stable entity IDs;
+        retrying the same operationId returns the original response. Omit routineSnapshot for a
+        freestyle session. Assignment references are deferred to Phase 5. A trainer with only
+        `START_SESSION` receives the session id/status/version metadata but no workout details;
+        joining an existing session or reading its details requires `VIEW_TRAINING`.
+      parameters:
+        - { name: clientId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operationId]
+              properties:
+                operationId: { type: string, format: uuid }
+                organizationId: { type: [string, 'null'], format: uuid }
+                routineSnapshot: { $ref: '#/components/schemas/WorkoutRoutineSnapshot' }
+      responses:
+        '200': { description: Existing active session or idempotent replay. }
+        '201': { description: New active session. }
+        '400': { description: Invalid request or snapshot. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Client or current authorization unavailable. }
+        '409': { description: Idempotency key reused with different values. }
+        '503': { description: SaaS database unavailable. }
+
+  /api/v2/workout-sessions/{sessionId}:
+    get:
+      tags: [saas]
+      operationId: getWorkoutSession
+      summary: Read an authoritative workout snapshot
+      description: Requires client ownership or a current `VIEW_TRAINING` grant. Organization owners and PlatformAdmins receive no implicit workout access.
+      parameters:
+        - { name: sessionId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Snapshot with stable IDs, versions, status, and lastEventSeq. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Session or current authorization unavailable. }
+        '503': { description: SaaS database unavailable. }
+
+  /api/v2/workout-sessions/{sessionId}/events:
+    get:
+      tags: [saas]
+      operationId: replayWorkoutSessionEvents
+      summary: Replay committed events in sequence order
+      parameters:
+        - { name: sessionId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: afterSequence, in: query, schema: { type: string, pattern: '^(0|[1-9][0-9]*)$' }, description: Return events strictly after this cursor; defaults to 0. }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 100 } }
+      responses:
+        '200': { description: Ordered page with hasMore, nextSequence, and lastEventSeq. }
+        '400': { description: Invalid cursor or page size. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Session or current authorization unavailable. }
+        '503': { description: SaaS database unavailable. }
+
+  /api/v2/workout-sessions/{sessionId}/operations:
+    post:
+      tags: [saas]
+      operationId: mutateWorkoutSession
+      summary: Apply an idempotent collaborative operation
+      description: >-
+        Requires client ownership or current `LOG_SETS`. Commands are hashed after normalization
+        and the response, event, and mutation commit together. Set writes use expectedSetVersion;
+        structural exercise/session-note writes use expectedSessionVersion. Stale writes return
+        `VERSION_CONFLICT`; a reused operationId with different values returns
+        `IDEMPOTENCY_KEY_REUSED`. Weight is canonical kg. Complex variant details use schemaVersion 1.
+      parameters:
+        - { name: sessionId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operationId, type]
+              properties:
+                operationId: { type: string, format: uuid }
+                type: { type: string, enum: [set.create, set.update, set.delete, exercise.add, exercise.swap, exercise.reorder, exercise.remove, session.update] }
+                target: { type: object, properties: { setId: { type: string, format: uuid }, exerciseId: { type: string, format: uuid } } }
+                expectedSetVersion: { type: integer, minimum: 1 }
+                expectedSessionVersion: { type: integer, minimum: 1 }
+                patch: { type: object, description: Operation-specific bounded fields. }
+      responses:
+        '200': { description: Durable operation result, current version, and event sequence. }
+        '400': { description: Invalid command or set shape. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Session, target, or authorization unavailable. }
+        '409': { description: VERSION_CONFLICT, IDEMPOTENCY_KEY_REUSED, SESSION_FINALIZED, or duplicate planned slot. }
+        '503': { description: SaaS database unavailable. }
+
+  /api/v2/workout-sessions/{sessionId}/complete:
+    post:
+      tags: [saas]
+      operationId: completeWorkoutSession
+      summary: Complete and release an active session
+      description: Requires client ownership or current `LOG_SETS` and the current structural session version. Completion projection stays in SQL and does not update legacy profile history.
+      parameters:
+        - { name: sessionId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operationId, expectedSessionVersion]
+              properties:
+                operationId: { type: string, format: uuid }
+                expectedSessionVersion: { type: integer, minimum: 1 }
+      responses:
+        '200': { description: Completed result; retry returns the durable response. }
+        '400': { description: Invalid request. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Session or current authorization unavailable. }
+        '409': { description: VERSION_CONFLICT or SESSION_FINALIZED. }
+        '503': { description: SaaS database unavailable. }
+
+  /api/v2/workout-sessions/{sessionId}/cancel:
+    post:
+      tags: [saas]
+      operationId: cancelWorkoutSession
+      summary: Cancel and release an active session
+      description: Requires client ownership or current `LOG_SETS` and the current structural session version. Session rows are retained.
+      parameters:
+        - { name: sessionId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operationId, expectedSessionVersion]
+              properties:
+                operationId: { type: string, format: uuid }
+                expectedSessionVersion: { type: integer, minimum: 1 }
+      responses:
+        '200': { description: Cancelled result; active slot released. }
+        '400': { description: Invalid request. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Session or current authorization unavailable. }
+        '409': { description: VERSION_CONFLICT or SESSION_FINALIZED. }
+        '503': { description: SaaS database unavailable. }
+
 components:
   securitySchemes:
     cookieAuth:
@@ -3406,6 +3582,72 @@ components:
           example: { error: "that code is wrong, used or expired", code: "link-invalid" }
 
   schemas:
+    WorkoutRoutineSnapshot:
+      type: object
+      additionalProperties: false
+      properties:
+        id: { type: string }
+        name: { type: string, maxLength: 120 }
+        routineIds: { type: array, items: { type: string }, maxItems: 20 }
+        day: { type: string }
+        deload: { type: boolean }
+        deloadMetadata: { type: object, description: Bounded phase-specific deload metadata. }
+        program: { type: object, description: Bounded program context snapshot. }
+        readiness: { type: object, description: Optional pre-workout readiness snapshot. }
+        notes: { type: string, maxLength: 1000 }
+        exercises:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/WorkoutSessionExerciseSnapshot' }
+    WorkoutSessionExerciseSnapshot:
+      type: object
+      additionalProperties: false
+      required: [exerciseId, name]
+      properties:
+        exerciseId: { type: string, maxLength: 128 }
+        name: { type: string, maxLength: 160 }
+        routineSlotId: { type: string, maxLength: 128 }
+        position: { type: integer, minimum: 0, maximum: 500 }
+        snapshot: { type: object, description: Bounded exercise presentation and mode snapshot. }
+        prescription: { type: object, description: Bounded progression and planned prescription metadata. }
+        notes: { type: string, maxLength: 500 }
+        noProgression: { type: boolean, description: Per-exercise progression exclusion. }
+        sets:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/WorkoutSessionSetInput' }
+    WorkoutSessionSetInput:
+      type: object
+      additionalProperties: false
+      properties:
+        position: { type: integer, minimum: 0, maximum: 500 }
+        plannedSetSlotId: { type: string, maxLength: 128 }
+        phase: { type: string, enum: [WARMUP, WORK] }
+        weightKg: { type: [string, number], pattern: '^[0-9]+(\.[0-9]{1,3})?$' }
+        reps: { type: integer, minimum: 0, maximum: 10000 }
+        durationSeconds: { type: integer, minimum: 0, maximum: 1000000 }
+        rir: { type: [string, number], description: RIR from 0 to 10, including one decimal place. }
+        rpe: { type: [string, number], description: RPE from 0 to 10, including one decimal place. }
+        done: { type: boolean }
+        notes: { type: string, maxLength: 500 }
+        details:
+          type: object
+          additionalProperties: false
+          properties:
+            schemaVersion: { type: integer, const: 1 }
+            mode: { type: string, enum: [reps, time, cardio] }
+            type: { type: string, enum: [straight, dropset, restpause] }
+            perSide: { type: boolean }
+            assistedKg: { type: [string, number] }
+            speedKph: { type: [string, number] }
+            distanceKm: { type: [string, number] }
+            drops: { type: array, maxItems: 20, items: { type: object } }
+            clusters: { type: array, maxItems: 20, items: { type: object } }
+            sides: { type: object, properties: { L: { type: object }, R: { type: object } } }
+            status: { type: string, maxLength: 24 }
+            tempo: { type: string, maxLength: 40 }
+            restSeconds: { type: integer, minimum: 0, maximum: 86400 }
+
     Error:
       type: object
       required: [error]

@@ -17,6 +17,7 @@ import * as coachConfig from './coach/config.js';
 import * as coachJobs from './coach/jobs.js';
 import { coachRoutes } from './coach/routes.js';
 import { saasRoutes, matchSaasRoute } from './saas/routes.js';
+import { workoutSessionRoutes } from './saas/workout-routes.js';
 import { getSaasDb } from './saas/db.js';
 import { deactivateMappedIdentity, legacyUidHash } from './saas/identity.js';
 import { startCadence } from './coach/cadence.js';
@@ -39,6 +40,7 @@ import { EXERCISES } from './coach/core/library-data.js';
 const PORT = +(process.env.PORT || 3000);
 const DATA = process.env.DATA_DIR || '/data';
 const SAAS_ENABLED = process.env.SAAS_ENABLED === '1' || process.env.SAAS_ENABLED === 'true';
+const COLLAB_WORKOUTS_ENABLED = ['1', 'true'].includes(process.env.COLLAB_WORKOUTS_ENABLED);
 const RP_ID = process.env.RP_ID || 'localhost';
 const ORIGIN = process.env.ORIGIN || 'http://localhost:8080';
 const RP_NAME = process.env.RP_NAME || 'openGym';
@@ -1893,6 +1895,7 @@ const routes = {
       // block is how the app knows this server does not take photos and videos at all.
       ...(MEDIA_ON ? { media: mediaConfig(MEDIA_LIMITS) } : {}),
       ...(Object.keys(db.exerciseMedia).length ? { exercise_media: db.exerciseMedia } : {}),
+      ...(SAAS_ENABLED && COLLAB_WORKOUTS_ENABLED ? { collab_workouts: true } : {}),
       ...(readSession(req) ? { coach: coachConfig.publicConfig() } : {})
     });
   },
@@ -2564,6 +2567,11 @@ const routes = {
   ...coachRoutes({ json, readBody, readSession, requireAdmin }),
 
   ...saasRoutes({
+    json, readBody, readSession, getDb: getSaasDb,
+    legacyUserById: id => db.users.find(user => user.id === id) || null
+  }),
+
+  ...workoutSessionRoutes({
     json, readBody, readSession, getDb: getSaasDb,
     legacyUserById: id => db.users.find(user => user.id === id) || null
   }),

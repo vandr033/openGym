@@ -243,6 +243,15 @@ export const PT_BR_OVERRIDES = {
   'Reps climb to {0}, then a set is added and the reps start over. At {1} sets it asks you to add weight instead.': 'As repetições aumentam até {0}; depois, uma série é adicionada e as repetições recomeçam. Ao chegar a {1} séries, o app sugere adicionar peso.',
 
   // Regional wording inherited from pt-PT would otherwise leak into pt-BR.
+  'Track water': 'Registrar água',
+  'Manage habits': 'Gerenciar hábitos',
+  'Add a few things you want to remember each day.': 'Adicione algumas coisas que você quer lembrar todos os dias.',
+  'Custom habit names stay as entered.': 'Os nomes personalizados dos hábitos ficam como você os informou.',
+  'Your habits': 'Seus hábitos',
+  'Past check-ins are kept.': 'Os registros anteriores são mantidos.',
+  'Start with a preset or add your own.': 'Comece com uma sugestão ou adicione seu próprio hábito.',
+  'Show the water tracker on Home.': 'Mostrar o registro de água no Início.',
+  'Last {0} check-ins': 'Últimos {0} registros',
   'Next': 'Próximo',
   'Move up': 'Mover para cima',
   'Move down': 'Mover para baixo',

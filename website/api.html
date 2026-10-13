@@ -244,7 +244,7 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   <p class="api-facts">
     <span>OpenAPI 3.1.0</span>
     <span>openGym v1.3.9</span>
-    <span>86 endpoints</span>
+    <span>93 endpoints</span>
     <span>AGPL-3.0-or-later</span>
   </p>
 
@@ -337,7 +337,7 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
     <div class="ptab">
   <div class="prow rrow">
     <span class="r-code s2">200</span>
-    <span class="p-desc">Instance flags, plus the Coach block for a signed-in caller.<span class="r-sig">{ invite_only: boolean, allow_guest: boolean, coach: object | null, password_login: always true, default_lang: string, exercise_media: object, media: <a href="#schema-MediaConfig">MediaConfig</a> }</span></span>
+    <span class="p-desc">Instance flags, plus the Coach block for a signed-in caller.<span class="r-sig">{ invite_only: boolean, allow_guest: boolean, coach: object | null, password_login: always true, collab_workouts: always true, default_lang: string, exercise_media: object, media: <a href="#schema-MediaConfig">MediaConfig</a> }</span></span>
   </div>
     </div>
   </div>
@@ -3996,6 +3996,415 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
     </div>
   </div>
 </details>
+
+<details class="ep" id="op-getClientActiveWorkoutSession">
+  <summary>
+    <span class="m get">GET</span>
+    <span class="ep-path"><code>/api/v2/clients/{clientId}/workout-sessions/active</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Read the signed-in client's active collaborative workout</span>
+  </summary>
+  <div class="ep-body">
+<p>Requires both <code>SAAS_ENABLED=1</code> and <code>COLLAB_WORKOUTS_ENABLED=1</code>. This Phase 2 UI endpoint reads only the authenticated client's own active session. Collaborative rows never enter <code>/api/data</code>.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session — the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+<p class="ep-h">Query parameters</p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">clientId <span class="p-hint">(path)</span><em class="p-req" title="required">required</em></span>
+    <span class="p-type">string</span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Active session</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">Feature disabled or client is not the signed-in user.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">SaaS database unavailable.</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-startClientWorkoutSession">
+  <summary>
+    <span class="m post">POST</span>
+    <span class="ep-path"><code>/api/v2/clients/{clientId}/workout-sessions</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Start or join a client-owned workout session</span>
+  </summary>
+  <div class="ep-body">
+<p>Requires both SaaS flags. A client can start their own session; a trainer needs an active relationship and <code>START_SESSION</code> grant in the supplied organization. A client's single active SQL session is shared across organizations. The server generates stable entity IDs; retrying the same operationId returns the original response. Omit routineSnapshot for a freestyle session. Assignment references are deferred to Phase 5. A trainer with only <code>START_SESSION</code> receives the session id/status/version metadata but no workout details; joining an existing session or reading its details requires <code>VIEW_TRAINING</code>.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session — the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+<p class="ep-h">Query parameters</p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">clientId <span class="p-hint">(path)</span><em class="p-req" title="required">required</em></span>
+    <span class="p-type">string</span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+<p class="ep-h">Request body <span class="p-hint">(JSON)</span></p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">operationId<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(uuid)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">organizationId</span>
+    <span class="p-type">string | null <span class="p-hint">(uuid)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">routineSnapshot</span>
+    <span class="p-type"><a href="#schema-WorkoutRoutineSnapshot">WorkoutRoutineSnapshot</a></span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Existing active session or idempotent replay.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s2">201</span>
+    <span class="p-desc">New active session.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">400</span>
+    <span class="p-desc">Invalid request or snapshot.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">Client or current authorization unavailable.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">409</span>
+    <span class="p-desc">Idempotency key reused with different values.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">SaaS database unavailable.</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-getWorkoutSession">
+  <summary>
+    <span class="m get">GET</span>
+    <span class="ep-path"><code>/api/v2/workout-sessions/{sessionId}</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Read an authoritative workout snapshot</span>
+  </summary>
+  <div class="ep-body">
+<p>Requires client ownership or a current <code>VIEW_TRAINING</code> grant. Organization owners and PlatformAdmins receive no implicit workout access.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session — the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+<p class="ep-h">Query parameters</p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">sessionId <span class="p-hint">(path)</span><em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(uuid)</span></span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Snapshot with stable IDs</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">Session or current authorization unavailable.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">SaaS database unavailable.</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-replayWorkoutSessionEvents">
+  <summary>
+    <span class="m get">GET</span>
+    <span class="ep-path"><code>/api/v2/workout-sessions/{sessionId}/events</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Replay committed events in sequence order</span>
+  </summary>
+  <div class="ep-body">
+
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session — the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+<p class="ep-h">Query parameters</p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">sessionId <span class="p-hint">(path)</span><em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(uuid)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">afterSequence</span>
+    <span class="p-type">string</span>
+    <span class="p-desc">Return events strictly after this cursor; defaults to 0.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">limit</span>
+    <span class="p-type">integer <span class="p-hint">(1&ndash;100, default 100)</span></span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Ordered page with hasMore</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">400</span>
+    <span class="p-desc">Invalid cursor or page size.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">Session or current authorization unavailable.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">SaaS database unavailable.</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-mutateWorkoutSession">
+  <summary>
+    <span class="m post">POST</span>
+    <span class="ep-path"><code>/api/v2/workout-sessions/{sessionId}/operations</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Apply an idempotent collaborative operation</span>
+  </summary>
+  <div class="ep-body">
+<p>Requires client ownership or current <code>LOG_SETS</code>. Commands are hashed after normalization and the response, event, and mutation commit together. Set writes use expectedSetVersion; structural exercise/session-note writes use expectedSessionVersion. Stale writes return <code>VERSION_CONFLICT</code>; a reused operationId with different values returns <code>IDEMPOTENCY_KEY_REUSED</code>. Weight is canonical kg. Complex variant details use schemaVersion 1.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session — the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+<p class="ep-h">Query parameters</p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">sessionId <span class="p-hint">(path)</span><em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(uuid)</span></span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+<p class="ep-h">Request body <span class="p-hint">(JSON)</span></p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">operationId<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(uuid)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">type<em class="p-req" title="required">required</em></span>
+    <span class="p-type">&quot;set.create&quot; | &quot;set.update&quot; | &quot;set.delete&quot; | &quot;exercise.add&quot; | &quot;exercise.swap&quot; | &quot;exercise.reorder&quot; | &quot;exercise.remove&quot; | &quot;session.update&quot;</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">target</span>
+    <span class="p-type">object</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">target.setId</span>
+    <span class="p-type">string <span class="p-hint">(uuid)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">target.exerciseId</span>
+    <span class="p-type">string <span class="p-hint">(uuid)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">expectedSetVersion</span>
+    <span class="p-type">integer <span class="p-hint">(1&ndash;)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">expectedSessionVersion</span>
+    <span class="p-type">integer <span class="p-hint">(1&ndash;)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">patch</span>
+    <span class="p-type">object</span>
+    <span class="p-desc">Operation-specific bounded fields.</span>
+  </div>
+</div>
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Durable operation result</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">400</span>
+    <span class="p-desc">Invalid command or set shape.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">Session</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">409</span>
+    <span class="p-desc">VERSION_CONFLICT</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">SaaS database unavailable.</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-completeWorkoutSession">
+  <summary>
+    <span class="m post">POST</span>
+    <span class="ep-path"><code>/api/v2/workout-sessions/{sessionId}/complete</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Complete and release an active session</span>
+  </summary>
+  <div class="ep-body">
+<p>Requires client ownership or current <code>LOG_SETS</code> and the current structural session version. Completion projection stays in SQL and does not update legacy profile history.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session — the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+<p class="ep-h">Query parameters</p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">sessionId <span class="p-hint">(path)</span><em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(uuid)</span></span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+<p class="ep-h">Request body <span class="p-hint">(JSON)</span></p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">operationId<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(uuid)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">expectedSessionVersion<em class="p-req" title="required">required</em></span>
+    <span class="p-type">integer <span class="p-hint">(1&ndash;)</span></span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Completed result; retry returns the durable response.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">400</span>
+    <span class="p-desc">Invalid request.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">Session or current authorization unavailable.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">409</span>
+    <span class="p-desc">VERSION_CONFLICT or SESSION_FINALIZED.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">SaaS database unavailable.</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-cancelWorkoutSession">
+  <summary>
+    <span class="m post">POST</span>
+    <span class="ep-path"><code>/api/v2/workout-sessions/{sessionId}/cancel</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Cancel and release an active session</span>
+  </summary>
+  <div class="ep-body">
+<p>Requires client ownership or current <code>LOG_SETS</code> and the current structural session version. Session rows are retained.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session — the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+<p class="ep-h">Query parameters</p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">sessionId <span class="p-hint">(path)</span><em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(uuid)</span></span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+<p class="ep-h">Request body <span class="p-hint">(JSON)</span></p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">operationId<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(uuid)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">expectedSessionVersion<em class="p-req" title="required">required</em></span>
+    <span class="p-type">integer <span class="p-hint">(1&ndash;)</span></span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Cancelled result; active slot released.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">400</span>
+    <span class="p-desc">Invalid request.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">Session or current authorization unavailable.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">409</span>
+    <span class="p-desc">VERSION_CONFLICT or SESSION_FINALIZED.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">SaaS database unavailable.</span>
+  </div>
+    </div>
+  </div>
+</details>
   </div>
 </section>
 
@@ -4005,6 +4414,270 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
        is <b>representative, not enforced</b> — the server stores it opaquely and the app
        grows it over time.</p>
     <div class="eps">
+
+<details class="ep sch" id="schema-WorkoutRoutineSnapshot">
+  <summary>
+    <span class="sch-name"><code>WorkoutRoutineSnapshot</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum"></span>
+  </summary>
+  <div class="ep-body">
+
+<div class="ptab">
+  <div class="prow">
+    <span class="p-name">id</span>
+    <span class="p-type">string</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">name</span>
+    <span class="p-type">string <span class="p-hint">(&le; 120 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">routineIds</span>
+    <span class="p-type">string[]</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">day</span>
+    <span class="p-type">string</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">deload</span>
+    <span class="p-type">boolean</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">deloadMetadata</span>
+    <span class="p-type">object</span>
+    <span class="p-desc">Bounded phase-specific deload metadata.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">program</span>
+    <span class="p-type">object</span>
+    <span class="p-desc">Bounded program context snapshot.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">readiness</span>
+    <span class="p-type">object</span>
+    <span class="p-desc">Optional pre-workout readiness snapshot.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">notes</span>
+    <span class="p-type">string <span class="p-hint">(&le; 1000 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">exercises</span>
+    <span class="p-type"><a href="#schema-WorkoutSessionExerciseSnapshot">WorkoutSessionExerciseSnapshot</a>[]</span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+  </div>
+</details>
+
+<details class="ep sch" id="schema-WorkoutSessionExerciseSnapshot">
+  <summary>
+    <span class="sch-name"><code>WorkoutSessionExerciseSnapshot</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum"></span>
+  </summary>
+  <div class="ep-body">
+
+<div class="ptab">
+  <div class="prow">
+    <span class="p-name">exerciseId<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(&le; 128 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">name<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(&le; 160 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">routineSlotId</span>
+    <span class="p-type">string <span class="p-hint">(&le; 128 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">position</span>
+    <span class="p-type">integer <span class="p-hint">(0&ndash;500)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">snapshot</span>
+    <span class="p-type">object</span>
+    <span class="p-desc">Bounded exercise presentation and mode snapshot.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">prescription</span>
+    <span class="p-type">object</span>
+    <span class="p-desc">Bounded progression and planned prescription metadata.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">notes</span>
+    <span class="p-type">string <span class="p-hint">(&le; 500 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">noProgression</span>
+    <span class="p-type">boolean</span>
+    <span class="p-desc">Per-exercise progression exclusion.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">sets</span>
+    <span class="p-type"><a href="#schema-WorkoutSessionSetInput">WorkoutSessionSetInput</a>[]</span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+  </div>
+</details>
+
+<details class="ep sch" id="schema-WorkoutSessionSetInput">
+  <summary>
+    <span class="sch-name"><code>WorkoutSessionSetInput</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum"></span>
+  </summary>
+  <div class="ep-body">
+
+<div class="ptab">
+  <div class="prow">
+    <span class="p-name">position</span>
+    <span class="p-type">integer <span class="p-hint">(0&ndash;500)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">plannedSetSlotId</span>
+    <span class="p-type">string <span class="p-hint">(&le; 128 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">phase</span>
+    <span class="p-type">&quot;WARMUP&quot; | &quot;WORK&quot;</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">weightKg</span>
+    <span class="p-type">string | number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">reps</span>
+    <span class="p-type">integer <span class="p-hint">(0&ndash;10000)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">durationSeconds</span>
+    <span class="p-type">integer <span class="p-hint">(0&ndash;1000000)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">rir</span>
+    <span class="p-type">string | number</span>
+    <span class="p-desc">RIR from 0 to 10</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">rpe</span>
+    <span class="p-type">string | number</span>
+    <span class="p-desc">RPE from 0 to 10</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">done</span>
+    <span class="p-type">boolean</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">notes</span>
+    <span class="p-type">string <span class="p-hint">(&le; 500 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">details</span>
+    <span class="p-type">object</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">details.schemaVersion</span>
+    <span class="p-type">always 1</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">details.mode</span>
+    <span class="p-type">&quot;reps&quot; | &quot;time&quot; | &quot;cardio&quot;</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">details.type</span>
+    <span class="p-type">&quot;straight&quot; | &quot;dropset&quot; | &quot;restpause&quot;</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">details.perSide</span>
+    <span class="p-type">boolean</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">details.assistedKg</span>
+    <span class="p-type">string | number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">details.speedKph</span>
+    <span class="p-type">string | number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">details.distanceKm</span>
+    <span class="p-type">string | number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">details.drops</span>
+    <span class="p-type">object[]</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">details.clusters</span>
+    <span class="p-type">object[]</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">details.sides</span>
+    <span class="p-type">object</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">details.sides.L</span>
+    <span class="p-type">object</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">details.sides.R</span>
+    <span class="p-type">object</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">details.status</span>
+    <span class="p-type">string <span class="p-hint">(&le; 24 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">details.tempo</span>
+    <span class="p-type">string <span class="p-hint">(&le; 40 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">details.restSeconds</span>
+    <span class="p-type">integer <span class="p-hint">(0&ndash;86400)</span></span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+  </div>
+</details>
 
 <details class="ep sch" id="schema-Error">
   <summary>

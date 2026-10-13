@@ -64,26 +64,44 @@ enum AuditActorType {
   OPERATOR
 }
 
+enum WorkoutSessionStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum WorkoutSetPhase {
+  WARMUP
+  WORK
+}
+
 model User {
-  id                  String                       @id @default(uuid()) @db.Char(36)
-  legacyUid           String?                      @db.VarChar(128)
-  legacyUidHash       String?                      @unique @db.Char(64)
-  displayName         String?                      @db.VarChar(120)
-  status              UserStatus                   @default(ACTIVE)
-  createdAt           DateTime                     @default(now()) @db.DateTime(3)
-  updatedAt           DateTime                     @updatedAt @db.DateTime(3)
-  platformAdmin       PlatformAdmin?
-  memberships         OrganizationMembership[]
-  enrollments         ClientOrganizationEnrollment[]
-  trainerRelationships TrainerClientRelationship[] @relation("RelationshipTrainer")
-  clientRelationships TrainerClientRelationship[] @relation("RelationshipClient")
-  createdInvitations  OrganizationInvitation[]     @relation("InvitationCreator")
-  acceptedInvitations OrganizationInvitation[]     @relation("InvitationAcceptor")
-  invitationTrainer   OrganizationInvitation[]     @relation("InvitationTrainer")
-  grantedAccess       ClientAccessGrant[]           @relation("GrantActor")
-  revokedAccess       ClientAccessGrant[]           @relation("GrantRevoker")
-  auditAsActor        AuditEvent[]                  @relation("AuditActor")
-  auditAsTarget       AuditEvent[]                  @relation("AuditTarget")
+  id                   String                         @id @default(uuid()) @db.Char(36)
+  legacyUid            String?                        @db.VarChar(128)
+  legacyUidHash        String?                        @unique @db.Char(64)
+  displayName          String?                        @db.VarChar(120)
+  status               UserStatus                     @default(ACTIVE)
+  createdAt            DateTime                       @default(now()) @db.DateTime(3)
+  updatedAt            DateTime                       @updatedAt @db.DateTime(3)
+  platformAdmin        PlatformAdmin?
+  memberships          OrganizationMembership[]
+  enrollments          ClientOrganizationEnrollment[]
+  trainerRelationships TrainerClientRelationship[]    @relation("RelationshipTrainer")
+  clientRelationships  TrainerClientRelationship[]    @relation("RelationshipClient")
+  createdInvitations   OrganizationInvitation[]       @relation("InvitationCreator")
+  acceptedInvitations  OrganizationInvitation[]       @relation("InvitationAcceptor")
+  invitationTrainer    OrganizationInvitation[]       @relation("InvitationTrainer")
+  grantedAccess        ClientAccessGrant[]            @relation("GrantActor")
+  revokedAccess        ClientAccessGrant[]            @relation("GrantRevoker")
+  auditAsActor         AuditEvent[]                   @relation("AuditActor")
+  auditAsTarget        AuditEvent[]                   @relation("AuditTarget")
+  clientSessions       WorkoutSession[]               @relation("SessionClient")
+  startedSessions      WorkoutSession[]               @relation("SessionStarter")
+  activeSession        ClientActiveSession?           @relation("ClientActiveSession")
+  createdWorkoutSets   WorkoutSet[]                   @relation("SetCreator")
+  updatedWorkoutSets   WorkoutSet[]                   @relation("SetUpdater")
+  workoutOperations    WorkoutOperation[]
+  workoutEvents        WorkoutEvent[]
 }
 
 model PlatformAdmin {
@@ -94,18 +112,19 @@ model PlatformAdmin {
 }
 
 model Organization {
-  id           String                       @id @default(uuid()) @db.Char(36)
-  type         OrganizationType
-  name         String                       @db.VarChar(120)
-  slug         String                       @unique @db.VarChar(80)
-  status       OrganizationStatus           @default(ACTIVE)
-  createdAt    DateTime                     @default(now()) @db.DateTime(3)
-  updatedAt    DateTime                     @updatedAt @db.DateTime(3)
-  memberships  OrganizationMembership[]
-  enrollments  ClientOrganizationEnrollment[]
-  relationships TrainerClientRelationship[]
-  invitations  OrganizationInvitation[]
-  auditEvents  AuditEvent[]
+  id              String                         @id @default(uuid()) @db.Char(36)
+  type            OrganizationType
+  name            String                         @db.VarChar(120)
+  slug            String                         @unique @db.VarChar(80)
+  status          OrganizationStatus             @default(ACTIVE)
+  createdAt       DateTime                       @default(now()) @db.DateTime(3)
+  updatedAt       DateTime                       @updatedAt @db.DateTime(3)
+  memberships     OrganizationMembership[]
+  enrollments     ClientOrganizationEnrollment[]
+  relationships   TrainerClientRelationship[]
+  invitations     OrganizationInvitation[]
+  auditEvents     AuditEvent[]
+  workoutSessions WorkoutSession[]
 }
 
 model OrganizationMembership {
@@ -116,8 +135,8 @@ model OrganizationMembership {
   status         MembershipStatus @default(ACTIVE)
   joinedAt       DateTime         @default(now()) @db.DateTime(3)
   updatedAt      DateTime         @updatedAt @db.DateTime(3)
-  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  user           User            @relation(fields: [userId], references: [id], onDelete: Restrict)
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  user           User             @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@unique([organizationId, userId])
   @@index([userId, status])
@@ -131,25 +150,25 @@ model ClientOrganizationEnrollment {
   status         EnrollmentStatus @default(ACTIVE)
   enrolledAt     DateTime         @default(now()) @db.DateTime(3)
   endedAt        DateTime?        @db.DateTime(3)
-  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  client         User            @relation(fields: [clientUserId], references: [id], onDelete: Restrict)
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  client         User             @relation(fields: [clientUserId], references: [id], onDelete: Restrict)
 
   @@unique([organizationId, clientUserId])
   @@index([clientUserId, status])
 }
 
 model TrainerClientRelationship {
-  id             String             @id @default(uuid()) @db.Char(36)
-  organizationId String             @db.Char(36)
-  trainerUserId  String             @db.Char(36)
-  clientUserId   String             @db.Char(36)
-  status         RelationshipStatus @default(PENDING)
-  createdAt      DateTime           @default(now()) @db.DateTime(3)
-  acceptedAt     DateTime?          @db.DateTime(3)
-  revokedAt      DateTime?          @db.DateTime(3)
-  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  trainer        User              @relation("RelationshipTrainer", fields: [trainerUserId], references: [id], onDelete: Restrict)
-  client         User              @relation("RelationshipClient", fields: [clientUserId], references: [id], onDelete: Restrict)
+  id             String              @id @default(uuid()) @db.Char(36)
+  organizationId String              @db.Char(36)
+  trainerUserId  String              @db.Char(36)
+  clientUserId   String              @db.Char(36)
+  status         RelationshipStatus  @default(PENDING)
+  createdAt      DateTime            @default(now()) @db.DateTime(3)
+  acceptedAt     DateTime?           @db.DateTime(3)
+  revokedAt      DateTime?           @db.DateTime(3)
+  organization   Organization        @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  trainer        User                @relation("RelationshipTrainer", fields: [trainerUserId], references: [id], onDelete: Restrict)
+  client         User                @relation("RelationshipClient", fields: [clientUserId], references: [id], onDelete: Restrict)
   grants         ClientAccessGrant[]
 
   @@unique([organizationId, trainerUserId, clientUserId])
@@ -158,42 +177,42 @@ model TrainerClientRelationship {
 }
 
 model ClientAccessGrant {
-  id                String                    @id @default(uuid()) @db.Char(36)
-  relationshipId    String                    @db.Char(36)
-  scope             AccessScope
-  grantedByUserId   String                    @db.Char(36)
-  grantedAt         DateTime                  @default(now()) @db.DateTime(3)
-  expiresAt         DateTime                  @db.DateTime(3)
-  revokedAt         DateTime?                 @db.DateTime(3)
-  revokedByUserId   String?                   @db.Char(36)
-  relationship      TrainerClientRelationship @relation(fields: [relationshipId], references: [id], onDelete: Restrict)
-  grantedBy         User                      @relation("GrantActor", fields: [grantedByUserId], references: [id], onDelete: Restrict)
-  revokedBy         User?                     @relation("GrantRevoker", fields: [revokedByUserId], references: [id], onDelete: Restrict)
+  id              String                    @id @default(uuid()) @db.Char(36)
+  relationshipId  String                    @db.Char(36)
+  scope           AccessScope
+  grantedByUserId String                    @db.Char(36)
+  grantedAt       DateTime                  @default(now()) @db.DateTime(3)
+  expiresAt       DateTime                  @db.DateTime(3)
+  revokedAt       DateTime?                 @db.DateTime(3)
+  revokedByUserId String?                   @db.Char(36)
+  relationship    TrainerClientRelationship @relation(fields: [relationshipId], references: [id], onDelete: Restrict)
+  grantedBy       User                      @relation("GrantActor", fields: [grantedByUserId], references: [id], onDelete: Restrict)
+  revokedBy       User?                     @relation("GrantRevoker", fields: [revokedByUserId], references: [id], onDelete: Restrict)
 
   @@index([relationshipId, scope, revokedAt])
   @@index([expiresAt])
 }
 
 model OrganizationInvitation {
-  id                String         @id @default(uuid()) @db.Char(36)
-  organizationId    String         @db.Char(36)
-  type              InvitationType
-  role              MembershipRole?
-  trainerUserId     String?        @db.Char(36)
-  targetLegacyUid   String?        @db.VarChar(128)
-  targetLegacyUidHash String?       @db.Char(64)
-  createdByUserId   String         @db.Char(36)
-  createdByPlatformAdmin Boolean   @default(false)
-  acceptedByUserId  String?        @db.Char(36)
-  tokenHash         String         @unique @db.Char(64)
-  expiresAt         DateTime       @db.DateTime(3)
-  acceptedAt        DateTime?      @db.DateTime(3)
-  revokedAt         DateTime?      @db.DateTime(3)
-  createdAt         DateTime       @default(now()) @db.DateTime(3)
-  organization      Organization  @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  createdBy         User          @relation("InvitationCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
-  trainer           User?         @relation("InvitationTrainer", fields: [trainerUserId], references: [id], onDelete: Restrict)
-  acceptedBy        User?         @relation("InvitationAcceptor", fields: [acceptedByUserId], references: [id], onDelete: Restrict)
+  id                     String          @id @default(uuid()) @db.Char(36)
+  organizationId         String          @db.Char(36)
+  type                   InvitationType
+  role                   MembershipRole?
+  trainerUserId          String?         @db.Char(36)
+  targetLegacyUid        String?         @db.VarChar(128)
+  targetLegacyUidHash    String?         @db.Char(64)
+  createdByUserId        String          @db.Char(36)
+  createdByPlatformAdmin Boolean         @default(false)
+  acceptedByUserId       String?         @db.Char(36)
+  tokenHash              String          @unique @db.Char(64)
+  expiresAt              DateTime        @db.DateTime(3)
+  acceptedAt             DateTime?       @db.DateTime(3)
+  revokedAt              DateTime?       @db.DateTime(3)
+  createdAt              DateTime        @default(now()) @db.DateTime(3)
+  organization           Organization    @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  createdBy              User            @relation("InvitationCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  trainer                User?           @relation("InvitationTrainer", fields: [trainerUserId], references: [id], onDelete: Restrict)
+  acceptedBy             User?           @relation("InvitationAcceptor", fields: [acceptedByUserId], references: [id], onDelete: Restrict)
 
   @@index([organizationId, createdAt])
   @@index([expiresAt, acceptedAt, revokedAt])
@@ -201,24 +220,148 @@ model OrganizationInvitation {
 }
 
 model AuditEvent {
-  id               String         @id @default(uuid()) @db.Char(36)
-  actorType        AuditActorType @default(USER)
-  actorUserId      String?        @db.Char(36)
-  actorLegacyUid   String?        @db.VarChar(128)
-  actorRef         String?        @db.VarChar(128)
-  targetUserId     String?        @db.Char(36)
-  organizationId   String?        @db.Char(36)
-  action           String         @db.VarChar(80)
-  entityType       String         @db.VarChar(80)
-  entityId         String?        @db.VarChar(128)
-  metadata         Json?
-  createdAt        DateTime       @default(now()) @db.DateTime(3)
-  actor            User?          @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: Restrict)
-  target           User?          @relation("AuditTarget", fields: [targetUserId], references: [id], onDelete: Restrict)
-  organization     Organization?  @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  id             String         @id @default(uuid()) @db.Char(36)
+  actorType      AuditActorType @default(USER)
+  actorUserId    String?        @db.Char(36)
+  actorLegacyUid String?        @db.VarChar(128)
+  actorRef       String?        @db.VarChar(128)
+  targetUserId   String?        @db.Char(36)
+  organizationId String?        @db.Char(36)
+  action         String         @db.VarChar(80)
+  entityType     String         @db.VarChar(80)
+  entityId       String?        @db.VarChar(128)
+  metadata       Json?
+  createdAt      DateTime       @default(now()) @db.DateTime(3)
+  actor          User?          @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+  target         User?          @relation("AuditTarget", fields: [targetUserId], references: [id], onDelete: Restrict)
+  organization   Organization?  @relation(fields: [organizationId], references: [id], onDelete: Restrict)
 
   @@index([organizationId, createdAt])
   @@index([actorUserId, createdAt])
   @@index([targetUserId, createdAt])
   @@index([entityType, entityId, createdAt])
+}
+
+model WorkoutSession {
+  id                 String                   @id @default(uuid()) @db.Char(36)
+  clientUserId       String                   @db.Char(36)
+  organizationId     String?                  @db.Char(36)
+  startedByUserId    String                   @db.Char(36)
+  status             WorkoutSessionStatus     @default(ACTIVE)
+  startedAt          DateTime                 @default(now()) @db.DateTime(3)
+  completedAt        DateTime?                @db.DateTime(3)
+  cancelledAt        DateTime?                @db.DateTime(3)
+  updatedAt          DateTime                 @updatedAt @db.DateTime(3)
+  version            Int                      @default(1)
+  lastEventSeq       BigInt                   @default(0)
+  routineSnapshot    Json?
+  completionSnapshot Json?
+  notes              String?                  @db.VarChar(1000)
+  source             String                   @default("freestyle") @db.VarChar(40)
+  metadata           Json?
+  client             User                     @relation("SessionClient", fields: [clientUserId], references: [id], onDelete: Restrict)
+  organization       Organization?            @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  startedBy          User                     @relation("SessionStarter", fields: [startedByUserId], references: [id], onDelete: Restrict)
+  exercises          WorkoutSessionExercise[]
+  activeSlot         ClientActiveSession?
+  operations         WorkoutOperation[]
+  events             WorkoutEvent[]
+
+  @@unique([id, clientUserId])
+  @@index([clientUserId, startedAt])
+  @@index([organizationId, status, startedAt])
+}
+
+model ClientActiveSession {
+  clientUserId String         @id @db.Char(36)
+  sessionId    String         @unique @db.Char(36)
+  createdAt    DateTime       @default(now()) @db.DateTime(3)
+  client       User           @relation("ClientActiveSession", fields: [clientUserId], references: [id], onDelete: Restrict)
+  session      WorkoutSession @relation(fields: [sessionId, clientUserId], references: [id, clientUserId], onDelete: Restrict)
+
+  @@unique([sessionId, clientUserId])
+}
+
+model WorkoutSessionExercise {
+  id            String         @id @default(uuid()) @db.Char(36)
+  sessionId     String         @db.Char(36)
+  exerciseId    String         @db.VarChar(128)
+  name          String         @db.VarChar(160)
+  routineSlotId String?        @db.VarChar(128)
+  position      Int
+  snapshot      Json
+  prescription  Json?
+  notes         String?        @db.VarChar(500)
+  noProgression Boolean        @default(false)
+  version       Int            @default(1)
+  deletedAt     DateTime?      @db.DateTime(3)
+  createdAt     DateTime       @default(now()) @db.DateTime(3)
+  updatedAt     DateTime       @updatedAt @db.DateTime(3)
+  session       WorkoutSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  sets          WorkoutSet[]
+
+  @@unique([sessionId, routineSlotId])
+  @@index([sessionId, position, deletedAt])
+}
+
+model WorkoutSet {
+  id                String                 @id @default(uuid()) @db.Char(36)
+  sessionExerciseId String                 @db.Char(36)
+  plannedSetSlotId  String?                @db.VarChar(128)
+  position          Int
+  phase             WorkoutSetPhase        @default(WORK)
+  weightKg          Decimal?               @db.Decimal(9, 3)
+  reps              Int?
+  durationSeconds   Int?
+  rir               Decimal?               @db.Decimal(3, 1)
+  rpe               Decimal?               @db.Decimal(3, 1)
+  done              Boolean                @default(false)
+  notes             String?                @db.VarChar(500)
+  details           Json
+  version           Int                    @default(1)
+  deletedAt         DateTime?              @db.DateTime(3)
+  createdByUserId   String                 @db.Char(36)
+  updatedByUserId   String                 @db.Char(36)
+  createdAt         DateTime               @default(now()) @db.DateTime(3)
+  updatedAt         DateTime               @updatedAt @db.DateTime(3)
+  sessionExercise   WorkoutSessionExercise @relation(fields: [sessionExerciseId], references: [id], onDelete: Restrict)
+  createdBy         User                   @relation("SetCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  updatedBy         User                   @relation("SetUpdater", fields: [updatedByUserId], references: [id], onDelete: Restrict)
+
+  @@unique([sessionExerciseId, plannedSetSlotId])
+  @@index([sessionExerciseId, position, deletedAt])
+}
+
+model WorkoutOperation {
+  id          String         @id @default(uuid()) @db.Char(36)
+  sessionId   String         @db.Char(36)
+  operationId String         @db.Char(36)
+  actorUserId String         @db.Char(36)
+  type        String         @db.VarChar(40)
+  requestHash String         @db.Char(64)
+  result      Json
+  createdAt   DateTime       @default(now()) @db.DateTime(3)
+  session     WorkoutSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  actor       User           @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+  events      WorkoutEvent[]
+
+  @@unique([sessionId, operationId])
+  @@index([actorUserId, operationId])
+}
+
+model WorkoutEvent {
+  id          String           @id @default(uuid()) @db.Char(36)
+  sessionId   String           @db.Char(36)
+  sequence    BigInt
+  operationId String           @db.Char(36)
+  actorUserId String           @db.Char(36)
+  type        String           @db.VarChar(40)
+  payload     Json
+  createdAt   DateTime         @default(now()) @db.DateTime(3)
+  session     WorkoutSession   @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  operation   WorkoutOperation @relation(fields: [sessionId, operationId], references: [sessionId, operationId], onDelete: Restrict)
+  actor       User             @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@unique([sessionId, sequence])
+  @@index([sessionId, createdAt])
 }

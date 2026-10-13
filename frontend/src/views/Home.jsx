@@ -18,6 +18,7 @@ export default function Home() {
   const nav = useNavigate()
   const S = useStore(s => s.S)
   const user = useStore(s => s.user)
+  const config = useStore(s => s.config)
   const [weekOffset, setWeekOffset] = useState(0)
 
   const today = new Date()
@@ -126,6 +127,11 @@ export default function Home() {
         </Button>
       </div>}
     </div>
+
+    {user && config?.collab_workouts && <div className="card row between">
+      <div><div className="lbl2">{t('Collaborative training')}</div><div className="small muted">{t('Open a server-authoritative workout shared with your coach.')}</div></div>
+      <Button size="sm" variant="tinted" icon="dumbbell" onClick={() => nav('/collab')}>{t('Open')}</Button>
+    </div>}
 
     {S.showWaterCard !== false && <div className="card">
       <div className="row between" style={{ marginBottom: 10 }}><h2 style={{ margin: 0 }}>{t('Water')}</h2>
