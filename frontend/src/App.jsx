@@ -44,6 +44,8 @@ import CoachIntake from './views/CoachIntake.jsx'
 import CoachSetup from './views/CoachSetup.jsx'
 import Join from './views/Join.jsx'
 import Organization from './views/Organization.jsx'
+import OrganizationHome from './views/OrganizationHome.jsx'
+import PlatformAdministration from './views/PlatformAdministration.jsx'
 
 // last known scrollY per route, so back-navigation can put the page where it was
 const scrollPositions = new Map()
@@ -179,7 +181,15 @@ function Shell() {
           {!authed && !loc.pathname.startsWith('/join') ? <Login /> : needsMobileOnboarding && !loc.pathname.startsWith('/join') ? <MobileOnboarding /> : (
             <Routes>
               <Route path="/join/:token?" element={<Join />} />
-              {config?.saas_invites_v2 && <Route path="/organization" element={<Organization />} />}
+              {config?.saas_invites_v2 && <>
+                <Route path="/organization" element={<OrganizationHome />} />
+                <Route path="/organizations/:organizationId/people" element={<Organization />} />
+                <Route path="/trainer/clients" element={<Organization trainerWorkspace />} />
+                <Route path="/platform" element={<PlatformAdministration />} />
+                <Route path="/platform/organizations" element={<PlatformAdministration />} />
+                <Route path="/platform/organizations/:organizationId" element={<PlatformAdministration />} />
+                <Route path="/platform/trainers" element={<PlatformAdministration />} />
+              </>}
               <Route path="/home" element={<Home />} />
               {/* Gym check-in — switched off in Settings, the route falls through to the
                   catch-all redirect below. */}

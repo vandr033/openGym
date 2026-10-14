@@ -152,11 +152,20 @@ export default function Join() {
     finally { setBusy(false) }
   }
 
-  const continueToApp = () => nav(preview?.role === 'CLIENT' && config?.collab_workouts ? '/collab' : config?.saas_invites_v2 ? '/organization' : '/home', { replace: true })
+  const continueToApp = () => {
+    const organizationId = preview?.organization?.id
+    const trainerWorkspace = preview?.organization?.type === 'TRAINER_BUSINESS' || preview?.role === 'TRAINER'
+    const destination = preview?.role === 'CLIENT'
+      ? config?.collab_workouts ? '/collab' : '/home'
+      : trainerWorkspace && organizationId ? `/trainer/clients?workspace=${organizationId}`
+        : organizationId ? `/organizations/${organizationId}/people`
+          : '/organization'
+    nav(destination, { replace: true })
+  }
   const client = preview?.role === 'CLIENT'
 
   return <div className="narrow" style={{ paddingTop: 'max(28px, env(safe-area-inset-top))', paddingBottom: 40 }}>
-    <div className="hdr"><div style={{ flex: 1 }}><h1>{t('Join a gym')}</h1></div></div>
+    <div className="hdr"><div style={{ flex: 1 }}><h1>{preview?.organization?.type === 'TRAINER_BUSINESS' ? t('Join as an independent trainer') : t('Join a gym')}</h1></div></div>
 
     {!config?.saas_invites_v2 ? <div className="card" role="status">{t('Invitations are not available on this server.')}</div>
       : MOBILE ? <div className="card" role="status">{t('Invitation sign-in is available in a web browser. Open this invitation on the web app to continue.')}</div> : <>

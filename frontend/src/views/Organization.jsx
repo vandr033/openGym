@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../lib/api.js'
 import { copyText } from '../lib/clipboard.js'
 import { t } from '../lib/i18n.js'
@@ -12,6 +12,7 @@ import Icon from '../components/Icon.jsx'
 const post = (path, body) => api(path, { method: 'POST', body: JSON.stringify(body) })
 const dateText = value => value ? new Date(value).toLocaleDateString() : '—'
 const appUrl = token => `${window.location.origin}${window.location.pathname}#/join/${token}`
+const eligibleRoles = ['OWNER', 'ADMIN', 'TRAINER']
 
 function InvitationSecret({ value, onDismiss }) {
   if (!value) return null
@@ -31,33 +32,48 @@ function InvitationSecret({ value, onDismiss }) {
   </section>
 }
 
-export default function Organization() {
+export default function Organization({ trainerWorkspace = false }) {
   const nav = useNavigate()
+  const { organizationId: routeOrganizationId } = useParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const user = useStore(state => state.user)
   const config = useStore(state => state.config)
   const [organizations, setOrganizations] = useState([])
-  const [organizationId, setOrganizationId] = useState('')
+  const [organizationId, setOrganizationId] = useState(routeOrganizationId || searchParams.get('workspace') || '')
   const [currentUserId, setCurrentUserId] = useState('')
-  const [platformOrganizations, setPlatformOrganizations] = useState(null)
-  const [platformForm, setPlatformForm] = useState(false)
   const [orgForm, setOrgForm] = useState(false)
   const [members, setMembers] = useState([])
   const [trainers, setTrainers] = useState([])
   const [clients, setClients] = useState([])
   const [invitations, setInvitations] = useState([])
-  const [tab, setTab] = useState('Trainers')
+  const [expandedClient, setExpandedClient] = useState('')
+  const [listQuery, setListQuery] = useState('')
+  const [tab, setTab] = useState(trainerWorkspace ? 'Clients' : 'Overview')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [generated, setGenerated] = useState(null)
-  const [form, setForm] = useState({ role: 'TRAINER', email: '', trainerId: '', expiresInDays: '7', sendEmail: false })
-  const [platform, setPlatform] = useState({ type: 'GYM', name: '', slug: '', ownerEmail: '', sendEmail: false })
+  const [form, setForm] = useState({ role: trainerWorkspace ? 'CLIENT' : 'TRAINER', email: '', trainerId: '', expiresInDays: '7', sendEmail: true })
 
-  const selected = organizations.find(row => row.id === organizationId) || organizations[0]
+  const availableOrganizations = trainerWorkspace
+    ? organizations.filter(row => eligibleRoles.includes(row.membershipRole))
+    : organizations
+  const selected = availableOrganizations.find(row => row.id === organizationId)
   const role = selected?.membershipRole
-  const canManage = ['OWNER', 'ADMIN', 'TRAINER'].includes(role)
-  const tabs = role === 'TRAINER' ? ['Clients', 'Invitations']
-    : ['OWNER', 'ADMIN'].includes(role) ? ['Trainers', 'Clients', 'Team', 'Invitations'] : []
+  const canManage = ['OWNER', 'ADMIN'].includes(role)
+  const isTrainer = role === 'TRAINER'
+  const tabs = trainerWorkspace ? ['Clients', 'Invitations']
+    : isTrainer ? ['Clients', 'Invitations']
+      : canManage ? ['Overview', 'Trainers', 'Clients', 'Team', 'Invitations'] : []
+  const visibleClients = trainerWorkspace ? clients.filter(row => row.relationshipId) : clients
+  const visibleInvitations = trainerWorkspace
+    ? invitations.filter(row => row.role === 'CLIENT' && row.trainerUserId === currentUserId)
+    : invitations
+  const query = listQuery.trim().toLowerCase()
+  const inviteRoles = trainerWorkspace ? ['CLIENT'] : role === 'OWNER'
+    ? ['OWNER', 'ADMIN', 'TRAINER', 'STAFF', 'CLIENT']
+    : role === 'ADMIN' ? ['ADMIN', 'TRAINER', 'STAFF', 'CLIENT']
+      : role === 'TRAINER' ? ['CLIENT'] : []
 
   const loadPeople = async id => {
     const org = organizations.find(row => row.id === id)
@@ -67,7 +83,7 @@ export default function Organization() {
       ['trainers', `/api/v2/organizations/${id}/trainers`],
       ['clients', `/api/v2/organizations/${id}/clients`],
       ['invitations', `/api/v2/organizations/${id}/invitations`],
-      ...(['OWNER', 'ADMIN'].includes(org.membershipRole) ? [['members', `/api/v2/organizations/${id}/members`]] : [])
+      ...(eligibleRoles.includes(org.membershipRole) && org.membershipRole !== 'TRAINER' ? [['members', `/api/v2/organizations/${id}/members`]] : [])
     ]
     const results = await Promise.allSettled(requests.map(([, path]) => api(path)))
     results.forEach((result, index) => {
@@ -83,42 +99,53 @@ export default function Organization() {
 
   useEffect(() => {
     let live = true
-    Promise.allSettled([api('/api/v2/organizations/me'), api('/api/v2/platform/organizations')]).then(([mine, platformResult]) => {
+    api('/api/v2/organizations/me').then(result => {
       if (!live) return
-      if (mine.status === 'fulfilled') {
-        setOrganizations(mine.value.organizations || [])
-        setOrganizationId(mine.value.organizations?.[0]?.id || '')
-        setCurrentUserId(mine.value.userId || '')
-      }
-      if (platformResult.status === 'fulfilled') setPlatformOrganizations(platformResult.value.organizations || [])
+      const rows = result.organizations || []
+      setOrganizations(rows)
+      setCurrentUserId(result.userId || '')
+      const preferredId = routeOrganizationId || searchParams.get('workspace')
+      if (preferredId) setOrganizationId(preferredId)
+      else setOrganizationId((trainerWorkspace ? rows.find(row => eligibleRoles.includes(row.membershipRole)) : rows[0])?.id || '')
       setLoading(false)
+    }).catch(e => {
+      if (live) { setError(e.message || t('Could not load organization people.')); setLoading(false) }
     })
     return () => { live = false }
-  }, [])
+  }, [routeOrganizationId, trainerWorkspace])
+
+  useEffect(() => { if (organizationId) loadPeople(organizationId) }, [organizationId, organizations.length])
 
   useEffect(() => {
-    if (organizationId) loadPeople(organizationId)
-  }, [organizationId, organizations.length])
+    if (trainerWorkspace || isTrainer) {
+      setForm(value => ({ ...value, role: 'CLIENT', trainerId: role === 'TRAINER' ? currentUserId : selected?.type === 'TRAINER_BUSINESS' ? currentUserId : '' }))
+      setTab('Clients')
+    } else if (canManage) {
+      setForm(value => ({ ...value, role: 'TRAINER', trainerId: '' }))
+      setTab(trainerWorkspace ? 'Clients' : 'Overview')
+    }
+    setOrgForm(false)
+    setGenerated(null)
+  }, [role, currentUserId, organizationId, trainers.length, trainerWorkspace])
 
-  useEffect(() => {
-    if (role === 'TRAINER') setForm(value => ({ ...value, role: 'CLIENT', trainerId: currentUserId }))
-    else if (['OWNER', 'ADMIN'].includes(role)) setForm(value => ({ ...value, role: 'TRAINER', trainerId: '' }))
-    setTab(role === 'TRAINER' ? 'Clients' : 'Trainers')
-  }, [role, currentUserId, organizationId, trainers.length])
+  const chooseWorkspace = id => {
+    setOrganizationId(id)
+    if (trainerWorkspace) setSearchParams(id ? { workspace: id } : {})
+  }
 
-  const inviteRoles = useMemo(() => role === 'OWNER'
-    ? ['OWNER', 'ADMIN', 'TRAINER', 'STAFF', 'CLIENT']
-    : role === 'ADMIN' ? ['ADMIN', 'TRAINER', 'STAFF', 'CLIENT']
-      : role === 'TRAINER' ? ['CLIENT'] : [], [role])
+  const openInvite = invitationRole => {
+    setForm(value => ({ ...value, role: invitationRole, trainerId: invitationRole === 'CLIENT' && (isTrainer || selected?.type === 'TRAINER_BUSINESS') ? currentUserId : '' }))
+    setOrgForm(value => !value)
+  }
 
-  const generateInvitation = async ev => {
-    ev.preventDefault()
+  const generateInvitation = async event => {
+    event.preventDefault()
     if (!selected || busy) return
     setBusy(true); setError(''); setGenerated(null)
     try {
       const result = await post(`/api/v2/organizations/${selected.id}/invitations`, {
         role: form.role, email: form.email.trim(),
-        ...(form.role === 'CLIENT' ? { trainerId: role === 'TRAINER' ? currentUserId : form.trainerId } : {}),
+        ...(form.role === 'CLIENT' ? { trainerId: isTrainer ? currentUserId : form.trainerId } : {}),
         expiresInDays: Number(form.expiresInDays), sendEmail: form.sendEmail
       })
       setGenerated(result); setOrgForm(false); await loadPeople(selected.id)
@@ -145,84 +172,125 @@ export default function Organization() {
     }
   })
 
-  const createOrganization = async ev => {
-    ev.preventDefault()
-    if (busy) return
+  const updateMember = async (member, change) => {
     setBusy(true); setError('')
     try {
-      const result = await post('/api/v2/platform/organizations', { ...platform, sendEmail: platform.sendEmail })
-      setGenerated(result.ownerInvitation); setPlatformForm(false)
-      const list = await api('/api/v2/platform/organizations')
-      setPlatformOrganizations(list.organizations || [])
-      setPlatform({ type: 'GYM', name: '', slug: '', ownerEmail: '', sendEmail: false })
-    } catch (e) { setError(e.message || t('Could not create organization.')) }
+      await api(`/api/v2/organizations/${selected.id}/members/${member.userId}`, { method: 'PUT', body: JSON.stringify(change) })
+      await loadPeople(selected.id)
+    } catch (e) { setError(e.message || t('Could not update membership.')) }
     finally { setBusy(false) }
   }
 
-  const copy = async value => {
-    if (await copyText(value)) useUI.getState().toast(t('Copied'))
-    else useUI.getState().toast(t('Could not copy'))
-  }
+  const removeMember = member => confirmSheet({
+    title: t('Remove this member?'), message: t('Their active trainer-client relationships and invitations will be revoked.'), confirmText: t('Remove'), danger: true,
+    onConfirm: async () => {
+      setBusy(true); setError('')
+      try { await api(`/api/v2/organizations/${selected.id}/members/${member.userId}`, { method: 'DELETE' }); await loadPeople(selected.id) }
+      catch (e) { setError(e.message || t('Could not remove member.')) }
+      finally { setBusy(false) }
+    }
+  })
 
-  return <div className="narrow" style={{ paddingBottom: 40 }}>
-    <div className="hdr">
-      <button className="iconbtn" onClick={() => nav('/home')} aria-label={t('Home')}><Icon name="chevronLeft" /></button>
-      <div style={{ flex: 1, marginInlineStart: 10 }}><h1>{t('Organization')}</h1></div>
-    </div>
+  const revokeRelationship = relationship => confirmSheet({
+    title: t('End this trainer-client relationship?'), message: t('All permissions for this organization relationship will be revoked.'), confirmText: t('Revoke'), danger: true,
+    onConfirm: async () => {
+      setBusy(true); setError('')
+      try { await post(`/api/v2/coaching/relationships/${relationship.id}/revoke`, {}); await loadPeople(selected.id); setExpandedClient('') }
+      catch (e) { setError(e.message || t('Could not revoke relationship.')) }
+      finally { setBusy(false) }
+    }
+  })
+
+  const trainerRows = canManage
+    ? members.filter(row => eligibleRoles.includes(row.role))
+    : trainers
+  const filteredTrainers = trainerRows.filter(row => `${row.displayName || ''} ${row.role} ${row.status || 'ACTIVE'}`.toLowerCase().includes(query))
+  const filteredClients = visibleClients.filter(row => `${row.displayName || ''} ${row.relationshipStatus || ''}`.toLowerCase().includes(query))
+  const filteredInvitations = visibleInvitations.filter(row => `${row.email || ''} ${row.role} ${row.status}`.toLowerCase().includes(query))
+  const filteredMembers = members.filter(row => `${row.displayName || ''} ${row.role} ${row.status}`.toLowerCase().includes(query))
+  const activeInvitations = invitations.filter(row => row.status === 'PENDING').length
+  const canInviteClient = eligibleRoles.includes(role)
+  const headerTitle = trainerWorkspace ? t('My clients') : t('Gym management')
+  const selectedLabel = selected?.type === 'TRAINER_BUSINESS' ? `${t('Independent Trainer')} · ${selected.name}` : selected?.name
+
+  return <main className={trainerWorkspace ? 'saas-admin trainer-workspace' : 'saas-admin gym-people'}>
+    <header className="hdr">
+      <button className="iconbtn" onClick={() => nav('/organization')} aria-label={t('Back to workspaces')}><Icon name="chevronLeft" /></button>
+      <div style={{ flex: 1, marginInlineStart: 10 }}><h1>{headerTitle}</h1><div className="sub">{selectedLabel || t('Select a workspace')}</div></div>
+    </header>
+
+    {trainerWorkspace && availableOrganizations.length > 1 && <label className="stack small saas-workspace-switcher">{t('Active workspace')}
+      <select className="input" value={selected?.id || ''} onChange={event => chooseWorkspace(event.target.value)}>
+        {availableOrganizations.map(row => <option key={row.id} value={row.id}>{row.type === 'TRAINER_BUSINESS' ? `${t('Independent Trainer')} · ${row.name}` : `${row.name} · ${t(row.membershipRole)}`}</option>)}
+      </select>
+    </label>}
 
     {generated && <InvitationSecret value={generated} onDismiss={() => setGenerated(null)} />}
+    {loading && <div className="card small muted" role="status">{t('Loading…')}</div>}
+    {error && <div role="alert" className="card small" style={{ color: 'var(--red)' }}>{error}</div>}
 
-    {platformOrganizations && <section className="card">
-      <div className="row between"><div><div className="lbl2">{t('Platform organizations')}</div><div className="small muted">{t('Create a gym and invite its first owner by verified e-mail.')}</div></div>
-        <Button size="sm" variant="tinted" onClick={() => setPlatformForm(value => !value)}>{platformForm ? t('Cancel') : t('New organization')}</Button></div>
-      {platformForm && <form onSubmit={createOrganization} style={{ marginTop: 12 }}>
-        <label className="stack small">{t('Organization name')}<input className="input" maxLength={120} value={platform.name} onChange={e => setPlatform(value => ({ ...value, name: e.target.value }))} required /></label>
-        <div style={{ height: 8 }} /><label className="stack small">{t('Slug')}<input className="input" maxLength={80} pattern="[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?" value={platform.slug} onChange={e => setPlatform(value => ({ ...value, slug: e.target.value }))} required /></label>
-        <div style={{ height: 8 }} /><label className="stack small">{t('Type')}<select className="input" value={platform.type} onChange={e => setPlatform(value => ({ ...value, type: e.target.value }))}><option value="GYM">{t('Gym')}</option><option value="TRAINER_BUSINESS">{t('Trainer business')}</option></select></label>
-        <div style={{ height: 8 }} /><label className="stack small">{t('First owner e-mail')}<input className="input" type="email" autoComplete="email" maxLength={254} value={platform.ownerEmail} onChange={e => setPlatform(value => ({ ...value, ownerEmail: e.target.value }))} required /></label>
-        <label className="row" style={{ gap: 8, justifyContent: 'flex-start', margin: '10px 0' }}><input type="checkbox" checked={platform.sendEmail} onChange={e => setPlatform(value => ({ ...value, sendEmail: e.target.checked }))} />{t('Send invitation e-mail')}</label>
-        <Button type="submit" variant="primary" disabled={busy}>{t('Create organization and owner invitation')}</Button>
-      </form>}
-      <div className="small dim" style={{ marginTop: 10 }}>{t('{0} organization(s)', platformOrganizations.length)}</div>
-    </section>}
+    {!loading && !availableOrganizations.length && <div className="card small muted">{trainerWorkspace ? t('No trainer workspace is available for this account.') : t('You do not have an organization role on this account.')}</div>}
+    {!loading && availableOrganizations.length > 0 && !selected && <div className="card small muted">{t('This account does not have permission to manage people in this workspace.')}</div>}
 
-    {loading ? <div className="card small muted" role="status">{t('Loading…')}</div> : organizations.length > 0 && <>
-      {organizations.length > 1 && <label className="stack small" style={{ margin: '8px 0 12px' }}>{t('Organization')}
-        <select className="input" value={selected?.id || ''} onChange={e => setOrganizationId(e.target.value)}>{organizations.map(org => <option key={org.id} value={org.id}>{org.name} · {org.membershipRole || t('CLIENT')}</option>)}</select>
+    {!loading && selected && <>
+      {!trainerWorkspace && availableOrganizations.length > 1 && !routeOrganizationId && <label className="stack small saas-workspace-switcher">{t('Active organization')}
+        <select className="input" value={selected.id} onChange={event => chooseWorkspace(event.target.value)}>{availableOrganizations.map(row => <option key={row.id} value={row.id}>{row.name} · {t(row.membershipRole || 'CLIENT')}</option>)}</select>
       </label>}
-      {selected && <section className="card">
-        <div className="row between"><div><div className="lbl2">{selected.name}</div><div className="small muted">{t('Your role: {0}', selected.membershipRole || t('CLIENT'))}</div></div></div>
-        {tabs.length > 0 && <>
-          <div style={{ height: 12 }} /><Segmented className="seg-range" options={tabs.map(value => ({ value, label: t(value) }))} value={tabs.includes(tab) ? tab : tabs[0]} onChange={setTab} />
-          {tab === 'Invitations' && <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}><Button size="sm" variant="primary" onClick={() => setOrgForm(value => !value)}>{orgForm ? t('Cancel') : t('Invite')}</Button></div>}
+      <section className="card">
+        <div className="row between" style={{ gap: 8, flexWrap: 'wrap' }}>
+          <div><div className="lbl2">{selectedLabel}</div>{!trainerWorkspace && <div className="small muted">{t('Your role: {0}', t(role || 'CLIENT'))}</div>}</div>
+          {tabs.length > 0 && <Segmented className="seg-range" options={tabs.map(value => ({ value, label: t(value) }))} value={tabs.includes(tab) ? tab : tabs[0]} onChange={setTab} />}
+        </div>
+        {(tab === 'Trainers' && canManage || tab === 'Clients' && canInviteClient || tab === 'Invitations' && canInviteClient) && <div className="row" style={{ justifyContent: 'flex-end', marginTop: 12 }}>
+          <Button size="sm" variant="primary" onClick={() => openInvite(tab === 'Trainers' ? 'TRAINER' : 'CLIENT')}>{orgForm ? t('Cancel') : tab === 'Trainers' ? t('Invite trainer') : t('Invite client')}</Button>
+        </div>}
+      </section>
+
+      {orgForm && <form className="card saas-admin-form" onSubmit={generateInvitation}>
+        <div className="lbl2">{t(form.role === 'CLIENT' ? 'Invite client' : 'Invite trainer')}</div>
+        {!trainerWorkspace && <label className="stack small">{t('Role')}<select className="input" value={form.role} onChange={event => setForm(value => ({ ...value, role: event.target.value, trainerId: '' }))}>{inviteRoles.map(value => <option key={value} value={value}>{t(value)}</option>)}</select></label>}
+        <label className="stack small">{t('E-mail address')}<input className="input" type="email" autoComplete="email" maxLength={254} value={form.email} onChange={event => setForm(value => ({ ...value, email: event.target.value }))} required /></label>
+        {form.role === 'CLIENT' && <>
+          <div className="small muted">{t('Choose the trainer for this client. Accepting the invitation does not grant workout permissions.')}</div>
+          {isTrainer ? <div className="small">{t('Assigned trainer: {0}', user?.name || t('you'))}</div>
+            : <label className="stack small">{t('Assigned trainer')}<select className="input" value={form.trainerId} onChange={event => setForm(value => ({ ...value, trainerId: event.target.value }))} required><option value="">{t('Choose a trainer')}</option>{trainers.filter(row => eligibleRoles.includes(row.role)).map(row => <option key={row.userId} value={row.userId}>{row.displayName || t('Unnamed')} · {t(row.role)}</option>)}</select></label>}
         </>}
+        {!trainerWorkspace && form.role !== 'CLIENT' && <label className="stack small">{t('Invitation expires in')}<select className="input" value={form.expiresInDays} onChange={event => setForm(value => ({ ...value, expiresInDays: event.target.value }))}><option value="7">{t('7 days')}</option><option value="14">{t('14 days')}</option><option value="30">{t('30 days')}</option></select></label>}
+        <label className="row" style={{ gap: 8, justifyContent: 'flex-start' }}><input type="checkbox" checked={form.sendEmail} onChange={event => setForm(value => ({ ...value, sendEmail: event.target.checked }))} />{t('Send invitation e-mail')}</label>
+        <Button type="submit" variant="primary" disabled={busy || (form.role === 'CLIENT' && !isTrainer && !form.trainerId)}>{t('Generate invitation')}</Button>
+      </form>}
+
+      {tab === 'Overview' && canManage && <section className="saas-admin-stats">
+        {[[t('Trainers'), trainerRows.filter(row => row.status === 'ACTIVE').length], [t('Clients'), clients.length], [t('Pending invitations'), activeInvitations]].map(([label, count]) => <div className="card" key={label}><div className="small muted">{label}</div><strong>{count}</strong></div>)}
+        <div className="card"><div className="small muted">{t('Organization status')}</div><strong>{t(selected.status)}</strong></div>
       </section>}
 
-      {orgForm && <form className="card" onSubmit={generateInvitation}>
-        <div className="lbl2">{t('Invite someone')}</div>
-        <label className="stack small" style={{ marginTop: 10 }}>{t('Role')}<select className="input" value={form.role} onChange={e => setForm(value => ({ ...value, role: e.target.value }))}>{inviteRoles.map(value => <option key={value} value={value}>{t(value)}</option>)}</select></label>
-        <div style={{ height: 8 }} /><label className="stack small">{t('E-mail address')}<input className="input" type="email" autoComplete="email" maxLength={254} value={form.email} onChange={e => setForm(value => ({ ...value, email: e.target.value }))} required /></label>
-        {form.role === 'CLIENT' && <>
-          <div className="small muted" style={{ marginTop: 8 }}>{t('Choose the trainer for this client. Accepting the invitation does not grant workout permissions.')}</div>
-          {role === 'TRAINER' ? <div className="small" style={{ marginTop: 6 }}>{t('Assigned trainer: {0}', user?.name || t('you'))}</div>
-            : <label className="stack small" style={{ marginTop: 8 }}>{t('Assigned trainer')}<select className="input" value={form.trainerId} onChange={e => setForm(value => ({ ...value, trainerId: e.target.value }))} required><option value="">{t('Choose a trainer')}</option>{trainers.filter(row => ['OWNER', 'ADMIN', 'TRAINER'].includes(row.role)).map(row => <option key={row.userId} value={row.userId}>{row.displayName} · {t(row.role)}</option>)}</select></label>}
-        </>}
-        <label className="stack small" style={{ marginTop: 8 }}>{t('Invitation expires in')}<select className="input" value={form.expiresInDays} onChange={e => setForm(value => ({ ...value, expiresInDays: e.target.value }))}><option value="7">{t('7 days')}</option><option value="14">{t('14 days')}</option><option value="30">{t('30 days')}</option></select></label>
-        <label className="row" style={{ gap: 8, justifyContent: 'flex-start', margin: '10px 0' }}><input type="checkbox" checked={form.sendEmail} onChange={e => setForm(value => ({ ...value, sendEmail: e.target.checked }))} />{t('Send invitation e-mail')}</label>
-        <Button type="submit" variant="primary" disabled={busy || (form.role === 'CLIENT' && role !== 'TRAINER' && !trainers.length)}>{t('Generate invitation')}</Button>
-      </form>}
+      {tab === 'Trainers' && <section className="card"><div className="lbl2">{t('Trainers')}</div><input className="input" type="search" aria-label={t('Search people')} placeholder={t('Search people')} value={listQuery} onChange={event => setListQuery(event.target.value)} />{filteredTrainers.map(row => <div className="saas-person-row" key={row.userId}><span>{row.displayName || t('Unnamed')}</span><span className="tag">{t(row.role)} · {t(row.status || 'ACTIVE')}</span></div>)}{!filteredTrainers.length && <div className="small muted" style={{ marginTop: 8 }}>{query ? t('No people match your search.') : t('No active trainers yet.')}</div>}</section>}
 
-      {tab === 'Trainers' && <section className="card"><div className="lbl2">{t('Trainers')}</div>{trainers.map(row => <div className="row between" key={row.userId} style={{ minHeight: 48, borderTop: '1px solid var(--line)' }}><span>{row.displayName || t('Unnamed')}</span><span className="tag">{t(row.role)}</span></div>)}{!trainers.length && <div className="small muted" style={{ marginTop: 8 }}>{t('No active trainers yet.')}</div>}</section>}
-      {tab === 'Clients' && <section className="card"><div className="lbl2">{t('Clients')}</div>{clients.map(row => <div className="row between" key={row.userId} style={{ minHeight: 48, borderTop: '1px solid var(--line)' }}><span>{row.displayName || t('Unnamed')}</span><span className="small dim">{row.grantedScopes?.length ? t('{0} permission(s)', row.grantedScopes.length) : t('No permissions granted')}</span></div>)}{!clients.length && <div className="small muted" style={{ marginTop: 8 }}>{t('No active clients yet.')}</div>}</section>}
-      {tab === 'Team' && <section className="card"><div className="lbl2">{t('Team')}</div>{members.map(row => <div className="row between" key={row.userId} style={{ minHeight: 48, borderTop: '1px solid var(--line)' }}><span>{row.displayName || t('Unnamed')}</span><span className="tag">{t(row.role)} · {t(row.status)}</span></div>)}{!members.length && <div className="small muted" style={{ marginTop: 8 }}>{t('No team members yet.')}</div>}</section>}
-      {tab === 'Invitations' && <section className="card"><div className="lbl2">{t('Invitations')}</div>{invitations.map(row => <div key={row.id} style={{ borderTop: '1px solid var(--line)', padding: '12px 0' }}>
-        <div className="row between"><div><div>{row.email || t('Existing account')}</div><div className="small muted">{t(row.role)} · {t(row.status)} · {t('Expires {0}', dateText(row.expiresAt))}</div><div className="small dim">{t('E-mail: {0}', row.deliveryStatus)}</div></div><Icon name="envelope" className="dim" /></div>
-        {row.status === 'PENDING' && row.canManage && <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 7 }}><Button size="sm" variant="ghost" disabled={busy} onClick={() => resendInvitation(row)}>{t('Resend')}</Button><Button size="sm" variant="ghost" className="dim" disabled={busy} onClick={() => revokeInvitation(row)}>{t('Revoke')}</Button></div>}
-      </div>)}{!invitations.length && <div className="small muted" style={{ marginTop: 8 }}>{t('No invitations yet.')}</div>}</section>}
+      {tab === 'Clients' && <section className="card"><div className="lbl2">{t('Clients')}</div><input className="input" type="search" aria-label={t('Search people')} placeholder={t('Search people')} value={listQuery} onChange={event => setListQuery(event.target.value)} />{filteredClients.map(row => <article className="saas-client" key={row.userId}>
+        <button className="saas-person-row saas-client-toggle" aria-expanded={expandedClient === row.userId} onClick={() => setExpandedClient(value => value === row.userId ? '' : row.userId)}><b>{row.displayName || t('Unnamed')}</b><span className="tag">{t(row.relationshipStatus || 'NOT_CONNECTED')}</span></button>
+        {expandedClient === row.userId && <div className="saas-client-detail"><div className="small muted">{t('Relationship status')}: {t(row.relationshipStatus || 'NOT_CONNECTED')}</div>
+          {role === 'TRAINER' || trainerWorkspace ? <><div className="small muted" style={{ marginTop: 6 }}>{t('Granted scopes')}</div><div className="row" style={{ gap: 6, flexWrap: 'wrap', marginTop: 5 }}>{(row.grantedScopes || []).map(scope => <span className="tag" key={scope}>{t(scope)}</span>)}{!row.grantedScopes?.length && <span className="small dim">{t('No permissions granted')}</span>}</div><div className="small dim" style={{ marginTop: 6 }}>{row.grantedScopes?.length ? t('Workout access is limited to these active permissions.') : t('No private workout access is granted.')}</div></> : <div className="small dim" style={{ marginTop: 6 }}>{t('Client access details are visible only to the assigned trainer and client.')}</div>}
+          {role === 'OWNER' || role === 'ADMIN' ? <><div className="small muted" style={{ marginTop: 8 }}>{t('Assigned trainers')}</div>{row.relationships?.length ? row.relationships.map(relationship => <div className="saas-person-row" key={relationship.id}><span>{relationship.trainerName || t('Unnamed')} · {t(relationship.status)}{relationship.trainerName && relationship.grantedScopes ? ` · ${relationship.grantedScopes.map(t).join(', ') || t('No permissions granted')}` : ''}</span>{relationship.status === 'ACTIVE' && <Button size="sm" variant="ghost" disabled={busy} onClick={() => revokeRelationship(relationship)}>{t('End relationship')}</Button>}</div>) : <div className="small dim">{t('No trainer relationship yet.')}</div>}</> : row.relationshipId && <div style={{ marginTop: 8 }}><Button size="sm" variant="ghost" disabled={busy} onClick={() => revokeRelationship({ id: row.relationshipId })}>{t('End relationship')}</Button></div>}
+          {config?.collab_workouts && <div style={{ marginTop: 8 }}><Button size="sm" variant="tinted" onClick={() => nav('/collab')}>{t('Open collaborative workouts')}</Button></div>}
+        </div>}
+      </article>)}{!filteredClients.length && <div className="small muted" style={{ marginTop: 8 }}>{query ? t('No people match your search.') : !visibleClients.length ? t('No active clients yet.') : t('No people match your search.')}</div>}</section>}
+
+      {tab === 'Team' && canManage && <section className="card"><div className="lbl2">{t('Team')}</div><input className="input" type="search" aria-label={t('Search people')} placeholder={t('Search people')} value={listQuery} onChange={event => setListQuery(event.target.value)} />{filteredMembers.map(row => <div className="saas-team-row" key={row.userId}>
+        <div className="saas-team-name"><b>{row.displayName || t('Unnamed')}</b><span className="small muted">{t(row.role)} · {t(row.status)}</span></div>
+        {row.role !== 'OWNER' && <div className="row saas-team-actions">
+          {role === 'ADMIN' && row.role === 'ADMIN' ? <span className="tag">{t(row.role)}</span> : <select aria-label={t('Role for {0}', row.displayName || t('member'))} className="input saas-team-select" value={row.role} disabled={busy} onChange={event => updateMember(row, { role: event.target.value })}>
+            {['ADMIN', 'TRAINER', 'STAFF'].filter(value => role === 'OWNER' || value !== 'ADMIN').map(value => <option value={value} key={value}>{t(value)}</option>)}
+          </select>}
+          <Button size="sm" variant="ghost" disabled={busy || role === 'ADMIN' && row.role === 'ADMIN'} onClick={() => updateMember(row, { status: row.status === 'ACTIVE' ? 'SUSPENDED' : 'ACTIVE' })}>{t(row.status === 'ACTIVE' ? 'Suspend' : 'Reactivate')}</Button>
+          <Button size="sm" variant="ghost" className="dim" disabled={busy || role === 'ADMIN' && row.role === 'ADMIN'} onClick={() => removeMember(row)}>{t('Remove')}</Button>
+        </div>}
+      </div>)}{!filteredMembers.length && <div className="small muted" style={{ marginTop: 8 }}>{query ? t('No people match your search.') : t('No team members yet.')}</div>}</section>}
+
+      {tab === 'Invitations' && <section className="card"><div className="lbl2">{t('Invitations')}</div><input className="input" type="search" aria-label={t('Search invitations')} placeholder={t('Search invitations')} value={listQuery} onChange={event => setListQuery(event.target.value)} />{filteredInvitations.map(row => <div className="saas-invitation" key={row.id}>
+        <div><div>{row.email || t('Existing account')}</div><div className="small muted">{t(row.role)} · {t(row.status)} · {t('Expires {0}', dateText(row.expiresAt))}</div><div className="small dim">{t('E-mail: {0}', row.deliveryStatus)}</div></div>
+        {['PENDING', 'EXPIRED'].includes(row.status) && row.canManage && <div className="row" style={{ justifyContent: 'flex-end', gap: 8 }}><Button size="sm" variant="ghost" disabled={busy} onClick={() => resendInvitation(row)}>{t('Resend')}</Button><Button size="sm" variant="ghost" className="dim" disabled={busy} onClick={() => revokeInvitation(row)}>{t('Revoke')}</Button></div>}
+      </div>)}{!filteredInvitations.length && <div className="small muted" style={{ marginTop: 8 }}>{query ? t('No invitations match your search.') : trainerWorkspace ? t('No pending client invitations.') : t('No invitations yet.')}</div>}</section>}
     </>}
-
-    {!loading && !organizations.length && !platformOrganizations && <div className="card small muted">{t('You do not have an organization role on this account.')}</div>}
-    {!loading && organizations.length > 0 && !canManage && <div className="card small muted">{t('This account does not have permission to manage people in this organization.')}</div>}
-    {error && <div role="alert" className="small" style={{ color: 'var(--red)', marginTop: 10 }}>{error}</div>}
-  </div>
+  </main>
 }

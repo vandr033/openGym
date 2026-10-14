@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useStore } from '../store/useStore.js'
 import { effectiveRoutines, effectiveRoutineIds, nextTrainingDay, streakWeeks, lastBW, setsDoneActive } from '../lib/history.js'
@@ -12,6 +12,7 @@ import { tappable } from '../lib/use-sheet-keyboard.js'
 import { glyphOf } from '../lib/glyphs.js'
 import { activeProgramContext, daysBetween } from '../lib/programs.js'
 import { DailyHabitsCard } from '../components/DailyHabits.jsx'
+import { api } from '../lib/api.js'
 
 // Home = what to do now + a quick glance. Deep charts & history live in Stats.
 export default function Home() {
@@ -20,6 +21,14 @@ export default function Home() {
   const user = useStore(s => s.user)
   const config = useStore(s => s.config)
   const [weekOffset, setWeekOffset] = useState(0)
+  const [platformAdmin, setPlatformAdmin] = useState(false)
+
+  useEffect(() => {
+    if (!config?.saas_invites_v2) { setPlatformAdmin(false); return }
+    let live = true
+    api('/api/v2/platform/me').then(result => { if (live) setPlatformAdmin(result.platformAdmin === true) }).catch(() => { if (live) setPlatformAdmin(false) })
+    return () => { live = false }
+  }, [config?.saas_invites_v2])
 
   const today = new Date()
   // A weekday can hold several routines. `todayRoutines` is the whole day; `routine` is the
@@ -131,13 +140,17 @@ export default function Home() {
     {user && config?.collab_workouts && <div className="card row between">
       <div><div className="lbl2">{t('Collaborative training')}</div><div className="small muted">{t('Open a server-authoritative workout shared with your coach.')}</div></div>
       <div className="row" style={{ gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-        {config?.saas_invites_v2 && <Button size="sm" variant="ghost" onClick={() => nav('/organization')}>{t('Organization')}</Button>}
+        {config?.saas_invites_v2 && <Button size="sm" variant="ghost" onClick={() => nav('/organization')}>{t('Workspaces')}</Button>}
         <Button size="sm" variant="tinted" icon="dumbbell" onClick={() => nav('/collab')}>{t('Open')}</Button>
       </div>
     </div>}
     {user && config?.saas_invites_v2 && !config?.collab_workouts && <div className="card row between">
-      <div><div className="lbl2">{t('Organization people')}</div><div className="small muted">{t('Manage your organization team and invitations.')}</div></div>
+      <div><div className="lbl2">{t('Workspaces')}</div><div className="small muted">{t('Manage your organization team and invitations.')}</div></div>
       <Button size="sm" variant="tinted" onClick={() => nav('/organization')}>{t('Open')}</Button>
+    </div>}
+    {user && platformAdmin && <div className="card row between">
+      <div><div className="lbl2">{t('Platform Administration')}</div><div className="small muted">{t('Manage gyms and independent trainers.')}</div></div>
+      <Button size="sm" variant="tinted" onClick={() => nav('/platform')}>{t('Open')}</Button>
     </div>}
 
     {S.showWaterCard !== false && <div className="card">

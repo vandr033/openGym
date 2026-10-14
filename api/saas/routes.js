@@ -349,6 +349,11 @@ export function saasRoutes({ json, readBody, readSession, getDb, legacyUserById,
   };
 
   return {
+    'GET /api/v2/platform/me': handle('GET /api/v2/platform/me', async (_req, res, { db, actor }) => {
+      if (!await hasPlatformAdmin(db, actor.id)) notFound();
+      json(res, 200, { platformAdmin: true });
+    }),
+
     'POST /api/v2/platform/organizations': handle('POST /api/v2/platform/organizations', async (req, res, { db, actor, legacyUser }) => {
       if (!await hasPlatformAdmin(db, actor.id)) notFound();
       const body = await readBody(req);
@@ -387,8 +392,113 @@ export function saasRoutes({ json, readBody, readSession, getDb, legacyUserById,
 
     'GET /api/v2/platform/organizations': handle('GET /api/v2/platform/organizations', async (_req, res, { db, actor }) => {
       if (!await hasPlatformAdmin(db, actor.id)) notFound();
-      const organizations = await db.organization.findMany({ orderBy: { createdAt: 'desc' } });
-      json(res, 200, { organizations: organizations.map(publicOrg) });
+      const now = new Date();
+      const [organizations, clients] = await Promise.all([
+        db.organization.findMany({
+          orderBy: { createdAt: 'desc' },
+          include: {
+            memberships: {
+              where: { status: 'ACTIVE', user: { status: 'ACTIVE' } },
+              select: { userId: true, role: true, user: { select: { displayName: true, verifiedEmail: { select: { email: true } } } } }
+            },
+            invitations: {
+              where: { type: 'MEMBERSHIP' }, orderBy: { createdAt: 'desc' },
+              select: { id: true, role: true, targetEmail: true, expiresAt: true, acceptedAt: true, revokedAt: true, deliveryStatus: true, createdByPlatformAdmin: true }
+            },
+            _count: { select: {
+              enrollments: { where: { status: 'ACTIVE' } },
+              invitations: { where: { acceptedAt: null, revokedAt: null, expiresAt: { gt: now } } }
+            } }
+          }
+        }),
+        db.clientOrganizationEnrollment.findMany({ where: { status: 'ACTIVE' }, select: { clientUserId: true } })
+      ]);
+      const trainerIds = new Set();
+      const listed = organizations.map(org => {
+        const owners = org.memberships.filter(row => row.role === 'OWNER').map(row => ({
+          userId: row.userId, displayName: row.user.displayName, email: row.user.verifiedEmail?.email || null
+        }));
+        for (const member of org.memberships) {
+          if (member.role === 'TRAINER' || (org.type === 'TRAINER_BUSINESS' && member.role === 'OWNER')) trainerIds.add(member.userId);
+        }
+        return {
+          ...publicOrg(org),
+          owners,
+          counts: {
+            trainers: org.memberships.filter(row => row.role === 'TRAINER' || (org.type === 'TRAINER_BUSINESS' && row.role === 'OWNER')).length,
+            clients: org._count.enrollments,
+            pendingInvitations: org._count.invitations
+          },
+          invitations: org.invitations.map(row => ({
+            id: row.id, role: row.role, email: row.targetEmail,
+            expiresAt: row.expiresAt, deliveryStatus: row.deliveryStatus || 'NOT_SENT',
+            createdByPlatformAdmin: row.createdByPlatformAdmin,
+            status: row.acceptedAt ? 'ACCEPTED' : row.revokedAt ? 'REVOKED' : row.expiresAt <= now ? 'EXPIRED' : 'PENDING'
+          }))
+        };
+      });
+      json(res, 200, {
+        organizations: listed,
+        summary: {
+          gyms: organizations.filter(org => org.type === 'GYM').length,
+          trainerBusinesses: organizations.filter(org => org.type === 'TRAINER_BUSINESS').length,
+          trainers: trainerIds.size,
+          clients: new Set(clients.map(row => row.clientUserId)).size,
+          pendingInvitations: organizations.reduce((total, org) => total + org._count.invitations, 0)
+        }
+      });
+    }),
+
+    'POST /api/v2/platform/organizations/:orgId/invitations/:invitationId/resend': inviteHandle('POST /api/v2/platform/organizations/:orgId/invitations/:invitationId/resend', async (req, res, { db, actor, legacyUser }) => {
+      const { orgId, invitationId } = req.saasParams;
+      if (!ID.test(orgId) || !ID.test(invitationId) || !await hasPlatformAdmin(db, actor.id)) notFound();
+      const body = await readBody(req);
+      assertKeys(body, ['sendEmail']);
+      if (body.sendEmail !== undefined && typeof body.sendEmail !== 'boolean') invalid('sendEmail must be a boolean');
+      const organization = await db.organization.findUnique({ where: { id: orgId } });
+      const invitation = await db.organizationInvitation.findFirst({ where: {
+        id: invitationId, organizationId: orgId, type: 'MEMBERSHIP', role: 'OWNER', createdByPlatformAdmin: true
+      } });
+      if (!organization || !invitation || invitation.acceptedAt || invitation.revokedAt || !invitation.targetEmail) notFound();
+      const rotated = await db.$transaction(async tx => {
+        const current = await tx.organizationInvitation.findFirst({ where: {
+          id: invitationId, organizationId: orgId, type: 'MEMBERSHIP', role: 'OWNER',
+          createdByPlatformAdmin: true, acceptedAt: null, revokedAt: null
+        } });
+        if (!current) notFound();
+        const value = await rotateInvitation(tx, current, secret);
+        const expiresAt = new Date(Date.now() + 7 * 86400000);
+        const updated = await tx.organizationInvitation.update({ where: { id: invitationId }, data: { expiresAt } });
+        await appendAudit(tx, {
+          actorUserId: actor.id, actorLegacyUid: legacyUser.id, organizationId: orgId,
+          action: 'invitation.resent', entityType: 'OrganizationInvitation', entityId: invitationId,
+          metadata: { platformManaged: true }
+        });
+        return { ...value, invitation: { ...updated, expiresAt } };
+      });
+      const deliveryStatus = body.sendEmail
+        ? await sendInvitationEmail(db, rotated.invitation, organization, rotated, emailDelivery, invitation.targetEmail)
+        : 'NOT_SENT';
+      json(res, 200, { invitation: { id: invitationId, expiresAt: rotated.invitation.expiresAt }, token: rotated.token, code: rotated.code, deliveryStatus });
+    }),
+
+    'DELETE /api/v2/platform/organizations/:orgId/invitations/:invitationId': handle('DELETE /api/v2/platform/organizations/:orgId/invitations/:invitationId', async (req, res, { db, actor, legacyUser }) => {
+      const { orgId, invitationId } = req.saasParams;
+      if (!ID.test(orgId) || !ID.test(invitationId) || !await hasPlatformAdmin(db, actor.id)) notFound();
+      await db.$transaction(async tx => {
+        const invitation = await tx.organizationInvitation.findFirst({ where: {
+          id: invitationId, organizationId: orgId, type: 'MEMBERSHIP', role: 'OWNER', createdByPlatformAdmin: true,
+          acceptedAt: null, revokedAt: null
+        } });
+        if (!invitation) notFound();
+        await tx.organizationInvitation.update({ where: { id: invitation.id }, data: { revokedAt: new Date() } });
+        await appendAudit(tx, {
+          actorUserId: actor.id, actorLegacyUid: legacyUser.id, organizationId: orgId,
+          action: 'invitation.revoked', entityType: 'OrganizationInvitation', entityId: invitationId,
+          metadata: { platformManaged: true }
+        });
+      });
+      json(res, 200, { ok: true });
     }),
 
     'GET /api/v2/organizations/me': handle('GET /api/v2/organizations/me', async (_req, res, { db, actor }) => {
@@ -494,16 +604,18 @@ export function saasRoutes({ json, readBody, readSession, getDb, legacyUserById,
       const role = await requireOrganization(db, actor, orgId);
       const invitation = await db.organizationInvitation.findFirst({ where: { id: invitationId, organizationId: orgId } });
       if (!invitation || (!['OWNER', 'ADMIN'].includes(role) && invitation.createdByUserId !== actor.id)) notFound();
-      if (!invitation.targetEmail || invitation.acceptedAt || invitation.revokedAt || invitation.expiresAt <= new Date()) notFound();
+      if (!invitation.targetEmail || invitation.acceptedAt || invitation.revokedAt) notFound();
       const rotated = await db.$transaction(async tx => {
-        const current = await tx.organizationInvitation.findFirst({ where: { id: invitationId, organizationId: orgId, acceptedAt: null, revokedAt: null, expiresAt: { gt: new Date() } } });
+        const current = await tx.organizationInvitation.findFirst({ where: { id: invitationId, organizationId: orgId, acceptedAt: null, revokedAt: null } });
         if (!current) notFound();
         const value = await rotateInvitation(tx, current, secret);
+        const expiresAt = new Date(Date.now() + 7 * 86400000);
+        const updated = await tx.organizationInvitation.update({ where: { id: invitationId }, data: { expiresAt } });
         await appendAudit(tx, {
           actorUserId: actor.id, actorLegacyUid: legacyUser.id, organizationId: orgId,
           action: 'invitation.resent', entityType: 'OrganizationInvitation', entityId: invitationId
         });
-        return value;
+        return { ...value, invitation: { ...updated, expiresAt } };
       });
       const deliveryStatus = body.sendEmail ? await sendInvitationEmail(db, rotated.invitation, await db.organization.findUnique({ where: { id: orgId } }), rotated, emailDelivery, invitation.targetEmail) : 'NOT_SENT';
       json(res, 200, { invitation: { id: invitationId, expiresAt: rotated.invitation.expiresAt }, token: rotated.token, code: rotated.code, deliveryStatus });
@@ -639,21 +751,34 @@ export function saasRoutes({ json, readBody, readSession, getDb, legacyUserById,
         where, include: { client: { select: { id: true, displayName: true } } }, orderBy: { enrolledAt: 'desc' }
       });
       const relationships = await db.trainerClientRelationship.findMany({
-        where: { organizationId: orgId, trainerUserId: actor.id, status: 'ACTIVE', clientUserId: { in: enrollments.map(row => row.clientUserId) } },
-        include: { grants: { where: { revokedAt: null, expiresAt: { gt: new Date() } }, select: { scope: true, expiresAt: true } } }
+        where: { organizationId: orgId, clientUserId: { in: enrollments.map(row => row.clientUserId) }, ...(role === 'TRAINER' ? { trainerUserId: actor.id } : {}) },
+        include: {
+          trainer: { select: { displayName: true } },
+          grants: { where: { revokedAt: null, expiresAt: { gt: new Date() } }, select: { scope: true, expiresAt: true } }
+        }
       });
-      const byClient = new Map(relationships.map(row => [row.clientUserId, row]));
+      const byClient = new Map();
+      for (const row of relationships) byClient.set(row.clientUserId, [...(byClient.get(row.clientUserId) || []), row]);
       json(res, 200, { clients: enrollments.map(row => {
-        const relationship = byClient.get(row.clientUserId);
+        const clientRelationships = byClient.get(row.clientUserId) || [];
+        const relationship = clientRelationships.find(value => value.trainerUserId === actor.id);
+        const relationshipStatus = clientRelationships.some(value => value.status === 'ACTIVE') ? 'ACTIVE'
+          : relationship?.status || (clientRelationships.some(value => value.status === 'PENDING') ? 'PENDING' : clientRelationships.length ? 'REVOKED' : 'NOT_CONNECTED');
         return {
           userId: row.client.id, displayName: row.client.displayName,
+          relationshipStatus,
           ...(relationship ? {
-            relationshipId: relationship.id,
-            ...(role === 'TRAINER' ? {
-              grantedScopes: relationship.grants.map(grant => grant.scope),
-              grantsExpireAt: relationship.grants.reduce((soonest, grant) => !soonest || grant.expiresAt < soonest ? grant.expiresAt : soonest, null)
+            grantedScopes: relationship.grants.map(grant => grant.scope),
+            grantsExpireAt: relationship.grants.reduce((soonest, grant) => !soonest || grant.expiresAt < soonest ? grant.expiresAt : soonest, null)
+          } : {}),
+          relationships: clientRelationships.map(value => ({
+            id: value.id, trainerName: value.trainer.displayName, status: value.status,
+            ...(value.trainerUserId === actor.id ? {
+              grantedScopes: value.grants.map(grant => grant.scope),
+              grantsExpireAt: value.grants.reduce((soonest, grant) => !soonest || grant.expiresAt < soonest ? grant.expiresAt : soonest, null)
             } : {})
-          } : {})
+          })),
+          ...(relationship ? { relationshipId: relationship.id } : {})
         };
       }) });
     }),

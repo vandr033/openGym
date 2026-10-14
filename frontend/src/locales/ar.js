@@ -1,5 +1,6 @@
+import saasLabels from "../saas-locales.js";
 // Arabic UI strings. Keys are the English source strings (see lib/i18n.js).
-export default {
+export default { ...saasLabels,
   'Confirm': 'تأكيد',
   'Cancel': 'إلغاء',
   'Press back again to exit': 'اضغط زر الرجوع مرة أخرى للخروج',

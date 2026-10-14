@@ -108,7 +108,7 @@ export function emailAuthRoutes({
   };
 
   const previewFor = async (db, invitation) => {
-    const org = await db.organization.findFirst({ where: { id: invitation.organizationId, status: 'ACTIVE' }, select: { id: true, name: true } });
+    const org = await db.organization.findFirst({ where: { id: invitation.organizationId, status: 'ACTIVE' }, select: { id: true, name: true, type: true } });
     if (!org) notFound();
     return {
       organization: org,

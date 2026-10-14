@@ -8,3 +8,12 @@ it('does not expose the removed Health screen route', () => {
   expect(app).not.toContain('HealthPreview')
   expect(app).toContain('<Route path="*" element={<Navigate to="/home" replace />} />')
 })
+
+it('keeps SaaS platform, gym, and trainer routes separate from the legacy admin dashboard', () => {
+  expect(app).toContain('<Route path="/platform" element={<PlatformAdministration />} />')
+  expect(app).toContain('<Route path="/platform/trainers" element={<PlatformAdministration />} />')
+  expect(app).toContain('<Route path="/platform/organizations" element={<PlatformAdministration />} />')
+  expect(app).toContain('<Route path="/organizations/:organizationId/people" element={<Organization />} />')
+  expect(app).toContain('<Route path="/trainer/clients" element={<Organization trainerWorkspace />} />')
+  expect(app).toContain('<Route path="/admin" element={user?.admin ? <Admin /> : <Navigate to="/home" replace />} />')
+})

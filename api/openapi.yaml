@@ -3232,6 +3232,18 @@ paths:
         '409': { description: E-mail or invitation conflicts with another account. }
         '503': { description: E-mail transport or SaaS database unavailable. }
 
+  /api/v2/platform/me:
+    get:
+      tags: [saas]
+      operationId: getPlatformAdministrationAccess
+      summary: Check PlatformAdmin access
+      description: Requires the separately provisioned SQL PlatformAdmin role; legacy OpenGym administrator flags do not grant access.
+      responses:
+        '200': { description: The signed-in SQL identity is a PlatformAdmin. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Not provisioned as PlatformAdmin. }
+        '503': { description: SaaS identity database is unavailable. }
+
   /api/v2/platform/organizations:
     post:
       tags: [saas]
@@ -3276,12 +3288,46 @@ paths:
       tags: [saas]
       operationId: listSaasOrganizations
       summary: List organizations for platform administration
-      description: Requires the separately provisioned PlatformAdmin role. Returns organization metadata only; it does not grant access to client data.
+      description: Requires PlatformAdmin. Returns owner and membership summaries, invitation lifecycle status, and aggregate trainer/client counts. It does not return client identities or grant access to workouts.
       responses:
         '200': { description: Organizations visible to platform administration. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { description: Not provisioned as PlatformAdmin. }
         '503': { description: SaaS identity database is unavailable. }
+
+  /api/v2/platform/organizations/{orgId}/invitations/{invitationId}/resend:
+    post:
+      tags: [saas]
+      operationId: resendPlatformOwnerInvitation
+      summary: Rotate a platform-created organization owner invitation
+      description: PlatformAdmin only; limited to an unaccepted owner invitation created by platform administration. Resending also renews its seven-day expiry, invalidates the old link/code, and records an audit event.
+      parameters:
+        - { name: orgId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: invitationId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { sendEmail: { type: boolean, default: false } } }
+      responses:
+        '200': { description: Rotated one-time invitation link/code and delivery status. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Not PlatformAdmin or invitation is outside the allowed owner invitation scope. }
+        '503': { description: Invitation service unavailable. }
+
+  /api/v2/platform/organizations/{orgId}/invitations/{invitationId}:
+    delete:
+      tags: [saas]
+      operationId: revokePlatformOwnerInvitation
+      summary: Revoke a platform-created organization owner invitation
+      description: PlatformAdmin only; limited to an unaccepted owner invitation created by platform administration. The revocation is audited.
+      parameters:
+        - { name: orgId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: invitationId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Invitation revoked. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Not PlatformAdmin or invitation is outside the allowed owner invitation scope. }
+        '503': { description: Invitation service unavailable. }
 
   /api/v2/organizations/me:
     get:
@@ -3351,8 +3397,8 @@ paths:
     post:
       tags: [saas]
       operationId: resendEmailInvitation
-      summary: Rotate and optionally resend an active invitation
-      description: The old link and code are invalidated; new secrets are returned only once.
+      summary: Rotate and optionally resend an unaccepted invitation
+      description: The old link and code are invalidated; new secrets are returned only once and its seven-day expiry is renewed. The creator or an organization OWNER/ADMIN may resend it, including after expiration.
       parameters:
         - { name: orgId, in: path, required: true, schema: { type: string, format: uuid } }
         - { name: invitationId, in: path, required: true, schema: { type: string, format: uuid } }

@@ -1,3 +1,4 @@
+import saasLabels from "../saas-locales.js";
 // Brazilian Portuguese overrides. Shared, region-neutral strings inherit from pt-PT.
 // Tests fingerprint every deliberately inherited entry so upstream changes require review.
 // Some byte-identical overrides intentionally pin wording that must not drift with pt-PT.
@@ -1021,4 +1022,4 @@ export const PT_BR_OVERRIDES = {
   'Enter how long it took — at least 1 minute.': 'Informe quanto tempo levou — pelo menos 1 minuto.',
 }
 
-export default { ...pt, ...PT_BR_OVERRIDES }
+export default { ...saasLabels, ...pt, ...PT_BR_OVERRIDES }

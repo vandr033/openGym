@@ -1,5 +1,6 @@
+import saasLabels from "../saas-locales.js";
 // Portuguese UI strings. Keys are the English source strings (see lib/i18n.js).
-export default {
+export default { ...saasLabels,
   'Confirm': 'Confirmar',
   'Cancel': 'Cancelar',
   'Press back again to exit': 'Prima novamente para sair',

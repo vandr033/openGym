@@ -1,5 +1,6 @@
+import saasLabels from "../saas-locales.js";
 // Thai UI strings. Keys are the English source strings (see lib/i18n.js).
-export default {
+export default { ...saasLabels,
   // --- generic ---
   'Confirm': 'ยืนยัน',
   'Cancel': 'ยกเลิก',
